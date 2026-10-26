@@ -65,11 +65,13 @@ stages:
               Copy-Item deploy\Deploy-Kiosk.ps1 "$(Build.ArtifactStagingDirectory)\" -Force
             displayName: Add deployment files
 
-          - task: PublishPipelineArtifact@1
+          # build artifacts – pipeline artifacts are not available on Azure DevOps Server
+          - task: PublishBuildArtifacts@1
             displayName: Artifact
             inputs:
-              targetPath: $(Build.ArtifactStagingDirectory)
-              artifact: kasa
+              PathtoPublish: $(Build.ArtifactStagingDirectory)
+              ArtifactName: kasa
+              publishLocation: Container
 
   - stage: Test
     displayName: Test kiosk

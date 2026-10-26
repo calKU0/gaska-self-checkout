@@ -13,6 +13,17 @@ jobs:
       runOnce:
         deploy:
           steps:
+            # build artifacts are downloaded explicitly (the automatic download uses pipeline artifacts – cloud only)
+            - download: none
+
+            - task: DownloadBuildArtifacts@0
+              displayName: Kiosk package
+              inputs:
+                buildType: current
+                downloadType: single
+                artifactName: kasa
+                downloadPath: $(Pipeline.Workspace)
+
             - task: DownloadSecureFile@1
               name: localSettings
               displayName: Shared kiosk settings
