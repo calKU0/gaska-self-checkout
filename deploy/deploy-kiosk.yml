@@ -1,0 +1,30 @@
+# Deployment to every kiosk of an environment (VM resources) – first installation or update (Deploy-Kiosk.ps1).
+parameters:
+  - name: environment
+    type: string
+
+jobs:
+  - deployment: Kiosk
+    displayName: Install / update
+    environment:
+      name: ${{ parameters.environment }}
+      resourceType: VirtualMachine
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - task: DownloadSecureFile@1
+              name: localSettings
+              displayName: Shared kiosk settings
+              inputs:
+                secureFile: appsettings.Local.json
+
+            - powershell: >-
+                & "$(Pipeline.Workspace)\kasa\Deploy-Kiosk.ps1"
+                -PackageDir "$(Pipeline.Workspace)\kasa\app"
+                -LocalSettingsFile "$(localSettings.secureFilePath)"
+                -ServiceUser "$(ServiceUser)"
+                -ServicePassword $env:SERVICE_PASSWORD
+              displayName: Install / update the kiosk
+              env:
+                SERVICE_PASSWORD: $(ServicePassword)

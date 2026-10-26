@@ -3,6 +3,7 @@
 @inject KioskSession Session
 @inject CheckoutCoordinator Coordinator
 @inject KioskHealthMonitor Health
+@inject MaintenanceMode Maintenance
 @inject StaffAlerts Alerts
 @inject IJSRuntime JS
 @inject Microsoft.Extensions.Options.IOptionsMonitor<Gaska.SelfCheckout.Application.Options.KioskOptions> Options
@@ -169,6 +170,18 @@
     </div>
 }
 
+@if (Updating && !OutOfService)
+{
+    @* shown only when nobody is shopping – the deployment waits for it before restarting the service *@
+    <div class="overlay out-of-service">
+        <div class="dialog">
+            <div class="result-icon warn"><Icon Name="refresh" /></div>
+            <h2>Trwa aktualizacja</h2>
+            <p class="lead">Kasa za chwilę będzie ponownie dostępna.</p>
+        </div>
+    </div>
+}
+
 @if (OutOfService)
 {
     @* above everything (also a cart in progress); a running payment is finished first and its result is shown *@
@@ -219,11 +232,17 @@
     /// <summary>A connection failed – the sale is stopped, except for a payment already running (or its result).</summary>
     private bool OutOfService => Health.OutOfService && !Coordinator.Status.IsRunning && Coordinator.Status.Result is null;
 
+    /// <summary>An update is waiting and nobody is shopping – the kiosk takes no new customer.</summary>
+    private bool Updating => Maintenance.Requested && Maintenance.Idle && !_paying;
+
+    private bool _updatingShown;
+
     protected override void OnInitialized()
     {
         Session.Changed += OnSessionChanged;
         Health.Changed += OnSessionChanged;
         Alerts.Changed += OnSessionChanged;
+        Maintenance.Changed += OnSessionChanged;
         // a payment is running (e.g. after a page reload) – show its state
         var status = Coordinator.Status;
         _paying = status.IsRunning || status.Result is not null;
@@ -243,7 +262,7 @@
     public async Task OnScanned(string code)
     {
         _idleCountdown = 0;
-        if (OutOfService)
+        if (OutOfService || Updating)
             return;
         if (_paying)
         {
@@ -267,7 +286,7 @@
 
     private void OpenPayment()
     {
-        if (Session.Cart.IsEmpty || OutOfService)
+        if (Session.Cart.IsEmpty || OutOfService || Updating)
             return;
         _cartOpen = false;
         _paying = true;
@@ -394,7 +413,12 @@
             }
         }
 
-        if (minuteChanged || hadCountdown || _idleCountdown > 0)
+        // the update screen appears / disappears without a session change (request expired, payment result closed)
+        var updating = Updating;
+        var updatingChanged = updating != _updatingShown;
+        _updatingShown = updating;
+
+        if (minuteChanged || hadCountdown || _idleCountdown > 0 || updatingChanged)
             StateHasChanged();
     }
 
@@ -403,6 +427,7 @@
         Session.Changed -= OnSessionChanged;
         Health.Changed -= OnSessionChanged;
         Alerts.Changed -= OnSessionChanged;
+        Maintenance.Changed -= OnSessionChanged;
         if (_timer is not null)
             await _timer.DisposeAsync();
         try

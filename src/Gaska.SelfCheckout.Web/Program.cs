@@ -60,6 +60,7 @@ builder.Services.AddScoped<ServiceOperations>();
 builder.Services.AddSingleton<TerminalTestRunner>();
 builder.Services.AddHostedService<DeviceWarmupService>();
 builder.Services.AddSingleton<KioskHealthMonitor>();
+builder.Services.AddSingleton<MaintenanceMode>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<KioskHealthMonitor>());
 
 var app = builder.Build();
@@ -92,6 +93,21 @@ app.MapGet("/img/category/{id:int}", async (int id, ProductImageService images, 
         return Results.NotFound();
     http.Response.Headers.CacheControl = "public, max-age=3600";
     return Results.File(icon.Data, ProductImageService.ContentType(icon.Extension));
+});
+
+// update window for the deployment script – this machine only (Deploy-Kiosk.ps1)
+var maintenance = app.MapGroup("/maintenance").AddEndpointFilter(async (context, next) =>
+    context.HttpContext.Connection.RemoteIpAddress is { } ip && System.Net.IPAddress.IsLoopback(ip) ? await next(context) : Results.NotFound());
+maintenance.MapGet("/", (MaintenanceMode mode) => Results.Ok(mode.Snapshot()));
+maintenance.MapPost("/", (MaintenanceMode mode, int? minutes) =>
+{
+    mode.Request(TimeSpan.FromMinutes(Math.Clamp(minutes ?? 60, 1, 24 * 60)));
+    return Results.Ok(mode.Snapshot());
+}).DisableAntiforgery();
+maintenance.MapDelete("/", (MaintenanceMode mode) =>
+{
+    mode.Cancel();
+    return Results.Ok(mode.Snapshot());
 });
 
 app.MapRazorComponents<App>()

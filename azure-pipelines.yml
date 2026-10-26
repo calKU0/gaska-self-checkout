@@ -1,0 +1,88 @@
+# CI/CD on Azure DevOps Server (TFS): build + tests on every push to main, then deployment to the test kiosk and – after
+# approval on the "kasa-prod" environment – to the production kiosks. Kiosks are VM resources of the environments
+# (an agent on each workstation); a newly registered kiosk gets the first installation when the stage runs again.
+#
+# Library (Pipelines → Library):
+#   secure files   cdn_api20251.net.dll   ERP API wrapper (not in the repository)
+#                  appsettings.Local.json shared kiosk settings written on the first installation only
+#   variable group SelfCheckout           ServiceUser, ServicePassword (secret) – Windows account of the kiosk service
+
+name: 1.$(Date:yy)$(DayOfYear)$(Rev:.r)
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    exclude:
+      - README.md
+
+pr: none
+
+variables:
+  - group: SelfCheckout
+
+stages:
+  - stage: Build
+    jobs:
+      - job: Build
+        pool:
+          name: Default
+        steps:
+          - checkout: self
+            clean: true
+
+          - task: DownloadSecureFile@1
+            name: xlApi
+            displayName: ERP API wrapper
+            inputs:
+              secureFile: cdn_api20251.net.dll
+
+          - powershell: |
+              New-Item -ItemType Directory -Force -Path "$(Build.SourcesDirectory)\lib" | Out-Null
+              Copy-Item "$(xlApi.secureFilePath)" "$(Build.SourcesDirectory)\lib\cdn_api20251.net.dll" -Force
+            displayName: Copy ERP API wrapper
+
+          - script: dotnet test Gaska.SelfCheckout.sln -c Release -p:Version=$(Build.BuildNumber) --logger trx --results-directory "$(Agent.TempDirectory)\tests"
+            displayName: Build and test
+
+          - task: PublishTestResults@2
+            displayName: Test results
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: VSTest
+              testResultsFiles: '$(Agent.TempDirectory)\tests\*.trx'
+
+          - script: >-
+              dotnet publish src\Gaska.SelfCheckout.Web\Gaska.SelfCheckout.Web.csproj
+              -p:PublishProfile=SelfCheckout -p:Version=$(Build.BuildNumber)
+              -p:PublishDir=$(Build.ArtifactStagingDirectory)\app\
+              -p:PublishUrl=$(Build.ArtifactStagingDirectory)\app\
+            displayName: Publish
+
+          - powershell: |
+              Copy-Item deploy\kiosk.cmd "$(Build.ArtifactStagingDirectory)\app\" -Force
+              Copy-Item deploy\Deploy-Kiosk.ps1 "$(Build.ArtifactStagingDirectory)\" -Force
+            displayName: Add deployment files
+
+          - task: PublishPipelineArtifact@1
+            displayName: Artifact
+            inputs:
+              targetPath: $(Build.ArtifactStagingDirectory)
+              artifact: kasa
+
+  - stage: Test
+    displayName: Test kiosk
+    dependsOn: Build
+    jobs:
+      - template: deploy/deploy-kiosk.yml
+        parameters:
+          environment: kasa-test
+
+  - stage: Production
+    displayName: Production kiosks
+    dependsOn: Test
+    jobs:
+      - template: deploy/deploy-kiosk.yml
+        parameters:
+          environment: kasa-prod

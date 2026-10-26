@@ -1,4 +1,4 @@
-# Instalacja kasy jako usługi Windows (uruchomić jako administrator).
+﻿# Instalacja kasy jako usługi Windows (uruchomić jako administrator).
 # Usługa powinna działać na koncie użytkownika, który ma zarejestrowaną bazę XL i konfigurację drukarki fiskalnej XL.
 # Gdy usługa już istnieje (np. ze starszej wersji – Gaska.Kasa.Web.exe), skrypt tylko przestawia ją na bieżący plik.
 param([string]$User = "", [string]$Password = "")

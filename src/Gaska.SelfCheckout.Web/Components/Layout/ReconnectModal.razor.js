@@ -14,7 +14,9 @@ function handleReconnectStateChanged(event) {
     } else if (event.detail.state === "hide") {
         reconnectModal.close();
     } else if (event.detail.state === "failed") {
+        // unattended kiosk: the page never becomes hidden/visible – keep retrying (e.g. the service restarts after an update)
         document.addEventListener("visibilitychange", retryWhenDocumentBecomesVisible);
+        setTimeout(retry, 5000);
     } else if (event.detail.state === "rejected") {
         location.reload();
     }
@@ -42,6 +44,7 @@ async function retry() {
     } catch (err) {
         // We got an exception, server is currently unavailable
         document.addEventListener("visibilitychange", retryWhenDocumentBecomesVisible);
+        setTimeout(retry, 5000);
     }
 }
 

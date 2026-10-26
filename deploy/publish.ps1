@@ -1,4 +1,4 @@
-# Publikacja aplikacji kasy – ten sam profil co w Visual Studio (Publish → "SelfCheckout"): Release, win-x86 (XL API),
+﻿# Publikacja aplikacji kasy – ten sam profil co w Visual Studio (Publish → "SelfCheckout"): Release, win-x86 (XL API),
 # wynik w .\publish (folder nie jest czyszczony – data\ i logs\ zostają).
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent

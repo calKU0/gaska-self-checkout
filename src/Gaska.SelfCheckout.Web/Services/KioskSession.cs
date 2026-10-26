@@ -36,16 +36,20 @@ public sealed class KioskSession : IDisposable
     private readonly ICustomerPricing _pricing;
     private readonly IOptionsMonitor<ErpOptions> _erp;
     private readonly ILogger<KioskSession> _logger;
+    private readonly MaintenanceMode _maintenance;
     private readonly List<Toast> _toasts = [];
     private readonly HashSet<int> _pricingInProgress = [];
 
-    public KioskSession(IProductCatalog catalog, ICustomerPricing pricing, IOptionsMonitor<ErpOptions> erp, ILogger<KioskSession> logger)
+    public KioskSession(IProductCatalog catalog, ICustomerPricing pricing, IOptionsMonitor<ErpOptions> erp, MaintenanceMode maintenance,
+        ILogger<KioskSession> logger)
     {
         _catalog = catalog;
         _pricing = pricing;
         _erp = erp;
+        _maintenance = maintenance;
         _logger = logger;
         _pricing.PriceCalculated += OnPriceCalculated;
+        _maintenance.Register(this);
     }
 
     public Cart Cart { get; } = new();
@@ -58,6 +62,9 @@ public sealed class KioskSession : IDisposable
     public Customer? Customer { get; private set; }
     public bool WelcomeVisible => DocumentKind is null;
     public bool IsInvoice => DocumentKind == SaleDocumentKind.Invoice;
+
+    /// <summary>Nobody is shopping on this screen: start screen with an empty cart.</summary>
+    public bool IsIdle => WelcomeVisible && Cart.IsEmpty;
 
     /// <summary>Prices are calculated by XL for the customer (or the one-off customer) and the document type.</summary>
     public PricingContext Pricing => PricingContext.For(Customer, DocumentKind ?? SaleDocumentKind.Receipt);
@@ -381,5 +388,9 @@ public sealed class KioskSession : IDisposable
         }
     }
 
-    public void Dispose() => _pricing.PriceCalculated -= OnPriceCalculated;
+    public void Dispose()
+    {
+        _pricing.PriceCalculated -= OnPriceCalculated;
+        _maintenance.Unregister(this);
+    }
 }
