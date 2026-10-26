@@ -76,6 +76,56 @@ function Start-Kiosk([string]$expectedVersion) {
     return $false
 }
 
+# "Log on as a service" (SeServiceLogonRight) – sc.exe config obj= does not grant it, without it the service cannot start
+function Grant-ServiceLogonRight([string]$account) {
+    if (-not ("ServiceLogonRight" -as [type])) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
+
+public static class ServiceLogonRight
+{
+    [StructLayout(LayoutKind.Sequential)]
+    struct LsaUnicodeString { public ushort Length; public ushort MaximumLength; public IntPtr Buffer; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct LsaObjectAttributes { public int Length; public IntPtr RootDirectory; public IntPtr ObjectName; public uint Attributes; public IntPtr SecurityDescriptor; public IntPtr SecurityQualityOfService; }
+
+    [DllImport("advapi32.dll")] static extern uint LsaOpenPolicy(IntPtr systemName, ref LsaObjectAttributes attributes, uint access, out IntPtr policy);
+    [DllImport("advapi32.dll")] static extern uint LsaAddAccountRights(IntPtr policy, byte[] sid, LsaUnicodeString[] rights, uint count);
+    [DllImport("advapi32.dll")] static extern uint LsaClose(IntPtr policy);
+    [DllImport("advapi32.dll")] static extern int LsaNtStatusToWinError(uint status);
+
+    public static void Grant(string account)
+    {
+        var sid = (SecurityIdentifier)new NTAccount(account).Translate(typeof(SecurityIdentifier));
+        var sidBytes = new byte[sid.BinaryLength];
+        sid.GetBinaryForm(sidBytes, 0);
+
+        var attributes = new LsaObjectAttributes();
+        IntPtr policy;
+        uint status = LsaOpenPolicy(IntPtr.Zero, ref attributes, 0x00000800 | 0x00000010, out policy); // CREATE_ACCOUNT | LOOKUP_NAMES
+        if (status != 0) throw new System.ComponentModel.Win32Exception(LsaNtStatusToWinError(status));
+        try
+        {
+            const string right = "SeServiceLogonRight";
+            var name = new LsaUnicodeString { Buffer = Marshal.StringToHGlobalUni(right), Length = (ushort)(right.Length * 2), MaximumLength = (ushort)((right.Length + 1) * 2) };
+            try
+            {
+                status = LsaAddAccountRights(policy, sidBytes, new[] { name }, 1);
+                if (status != 0) throw new System.ComponentModel.Win32Exception(LsaNtStatusToWinError(status));
+            }
+            finally { Marshal.FreeHGlobal(name.Buffer); }
+        }
+        finally { LsaClose(policy); }
+    }
+}
+"@
+    }
+    [ServiceLogonRight]::Grant($account)
+}
+
 # an existing installation is updated where it is (e.g. installed manually in another folder)
 $existing = Get-CimInstance Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue
 if ($existing -and $existing.PathName) {
@@ -93,6 +143,18 @@ if (-not $packageVersion) { throw "No $appDll in $PackageDir" }
 $installedVersion = Get-FileVersion (Join-Path $InstallDir $appDll)
 $service = Get-Service $ServiceName -ErrorAction SilentlyContinue
 Write-Step "Package $packageVersion, installed $(if ($installedVersion) { $installedVersion } else { '-' }), service $(if ($service) { $service.Status } else { 'missing' })"
+
+# also repairs a service installed before (idempotent)
+if ($ServiceUser) {
+    Write-Step "Granting 'Log on as a service' to $ServiceUser"
+    Grant-ServiceLogonRight $ServiceUser
+    # the account / password in the variable group may have changed since the installation
+    if ($service) {
+        & sc.exe config $ServiceName obj= $ServiceUser password= $ServicePassword | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "Service account could not be set" }
+        & icacls $InstallDir /grant "${ServiceUser}:(OI)(CI)M" /T /Q | Out-Null
+    }
+}
 
 # ---------------------------------------------------------------- first installation
 if (-not $service) {
