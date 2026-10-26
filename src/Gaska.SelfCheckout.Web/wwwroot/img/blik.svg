@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 140" role="img" aria-label="BLIK">
+  <!-- BLIK acceptance mark; replace this file with the official one from the acquirer / BLIK brand book (same name) -->
+  <defs>
+    <radialGradient id="blik-dot" cx="35%" cy="30%" r="80%">
+      <stop offset="0" stop-color="#ff6fb0"/>
+      <stop offset=".55" stop-color="#ff0f5b"/>
+      <stop offset="1" stop-color="#e6002d"/>
+    </radialGradient>
+  </defs>
+  <rect width="240" height="140" rx="28" fill="#000"/>
+  <g fill="none" stroke="#fff" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M42 30v70"/>
+    <circle cx="66" cy="76" r="24"/>
+    <path d="M110 30v70"/>
+    <path d="M136 60v40"/>
+    <path d="M162 30v70M162 82l28-28M174 72l18 28"/>
+  </g>
+  <circle cx="136" cy="35" r="12" fill="url(#blik-dot)"/>
+</svg>

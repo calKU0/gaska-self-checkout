@@ -1,0 +1,35 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="10.1.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Gaska.SelfCheckout.Infrastructure\Gaska.SelfCheckout.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Gaska.SelfCheckout.Infrastructure.Erp\Gaska.SelfCheckout.Infrastructure.Erp.csproj" />
+    <ProjectReference Include="..\..\src\Gaska.SelfCheckout.Devices.Polcard\Gaska.SelfCheckout.Devices.Polcard.csproj" />
+    <ProjectReference Include="..\..\src\Gaska.SelfCheckout.Devices.Posnet\Gaska.SelfCheckout.Devices.Posnet.csproj" />
+  </ItemGroup>
+
+</Project>

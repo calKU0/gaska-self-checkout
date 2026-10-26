@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 152 94" role="img" aria-label="Mastercard">
+  <!-- Mastercard acceptance mark (two interlocking circles); replace with the official file from the acquirer if needed -->
+  <rect width="152" height="94" rx="10" fill="#fff"/>
+  <circle cx="58" cy="47" r="31" fill="#eb001b"/>
+  <circle cx="94" cy="47" r="31" fill="#f79e1b"/>
+  <path d="M76 21.8a31 31 0 0 1 0 50.4 31 31 0 0 1 0-50.4Z" fill="#ff5f00"/>
+</svg>

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="pl">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#F9C211" />
+    <base href="/" />
+    <title>GĄSKA – Kasa samoobsługowa</title>
+    <link rel="icon" type="image/png" href="img/gaska-logo.png" />
+    <ResourcePreloader />
+    <link rel="stylesheet" href="@Assets["app.css"]" />
+    <link rel="stylesheet" href="@Assets["Gaska.SelfCheckout.Web.styles.css"]" />
+    <ImportMap />
+    <HeadOutlet @rendermode="RenderModeServer" />
+</head>
+
+<body>
+    <Routes @rendermode="RenderModeServer" />
+    <ReconnectModal />
+    <script src="@Assets["_framework/blazor.web.js"]"></script>
+</body>
+
+</html>
+
+@code {
+    // No prerendering: the kiosk state (cart, scanner) lives in a single SignalR circuit.
+    private static readonly IComponentRenderMode RenderModeServer = new InteractiveServerRenderMode(prerender: false);
+}

@@ -1,0 +1,334 @@
+@page "/service"
+@inject ServiceOperations Ops
+@inject KioskHealthMonitor Health
+@inject StaffAlerts Alerts
+@implements IDisposable
+@inject NavigationManager Nav
+@inject Microsoft.Extensions.Options.IOptionsMonitor<Gaska.SelfCheckout.Application.Options.KioskOptions> Options
+
+<PageTitle>Panel obsługi – kasa samoobsługowa</PageTitle>
+
+@if (!_authorized)
+{
+    <div class="overlay" style="background: var(--grey-50)">
+        <div class="dialog">
+            <img src="img/gaska-logo.png" alt="GĄSKA" style="height:56px" />
+            <h2>Panel obsługi</h2>
+            <p class="muted">Wprowadź PIN</p>
+            <PinPad OnEntered="CheckPin" Error="_pinError" />
+            <a class="btn btn-ghost" href="/">Wróć do kasy</a>
+        </div>
+    </div>
+    return;
+}
+
+<div class="service">
+    <header class="topbar">
+        <img class="topbar-logo" src="img/gaska-logo.png" alt="GĄSKA" />
+        <div class="topbar-title"><strong>Panel obsługi</strong><span>Kasa @Options.CurrentValue.StationId</span></div>
+        <div class="topbar-spacer"></div>
+        <button class="btn btn-outline" @onclick="LoadStatus" disabled="@_busy"><Icon Name="refresh" /> Odśwież</button>
+        <a class="btn btn-outline" href="/settings"><Icon Name="settings" /> Konfiguracja</a>
+        <a class="btn btn-primary" href="/"><Icon Name="home" /> Wróć do kasy</a>
+    </header>
+
+    <div class="service-body">
+        @if (Alerts.Active is { Count: > 0 } alerts)
+        {
+            <div class="card service-alert">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:12px">
+                    <h3><Icon Name="bell" /> Alarmy</h3>
+                    @if (Alerts.IsSounding)
+                    {
+                        <button class="btn btn-secondary btn-sm" @onclick="Alerts.AcknowledgeAll"><Icon Name="bell-off" /> Wycisz wszystkie</button>
+                    }
+                </div>
+                <div class="alarm-list">
+                    @foreach (var a in alerts)
+                    {
+                        <div class="alarm-item @(a.Silenced ? "silenced" : null)" @key="a.Key">
+                            <Icon Name="@(a.Silenced ? "bell-off" : "bell")" />
+                            <div class="text">
+                                <strong>@a.Title</strong>
+                                <span>@a.RaisedAt.ToString("HH:mm:ss")@(a.Detail is null ? "" : $" · {a.Detail}")@(a.Silenced ? " · wyciszony, zniknie po usunięciu problemu" : "")</span>
+                            </div>
+                            @if (a.Kind == StaffAlertKind.HelpRequest)
+                            {
+                                <button class="btn btn-outline btn-sm" @onclick="() => Alerts.Acknowledge(a.Key)"><Icon Name="check" /> Obsłużone</button>
+                            }
+                            else if (a.Sounding)
+                            {
+                                <button class="btn btn-outline btn-sm" @onclick="() => Alerts.Acknowledge(a.Key)"><Icon Name="bell-off" /> Wycisz</button>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+        @if (Health.OutOfService)
+        {
+            <div class="card service-alert">
+                <h3><Icon Name="alert" /> Kasa zatrzymana – klienci widzą komunikat „Kasa chwilowo nieczynna”</h3>
+                <p>Sprzedaż wznowi się sama po usunięciu problemu (sprawdzenie co 15 s lub przycisk „Odśwież”).</p>
+            </div>
+        }
+        <div class="tiles">
+            @if (_status is null)
+            {
+                <div class="tile"><div class="spinner"></div></div>
+            }
+            else
+            {
+                @foreach (var s in _status)
+                {
+                    <div class="tile">
+                        <div class="head"><span class="dot @(s.Ok ? "ok" : "err")"></span><h3>@s.Name</h3></div>
+                        <p>@s.Message</p>
+                    </div>
+                }
+            }
+        </div>
+
+        <div class="card">
+            <h3>Terminal płatniczy (Polcard / Fiserv)</h3>
+            <div class="action-grid">
+                <button class="btn btn-outline btn-lg" disabled="@_busy" @onclick="() => Do(Ops.TestTerminalAsync)"><Icon Name="terminal" /> Test połączenia</button>
+                <button class="btn btn-outline btn-lg" disabled="@_busy" @onclick="() => Do(() => Ops.LastTransactionAsync(false))"><Icon Name="receipt" /> Ostatnia transakcja</button>
+                <button class="btn btn-outline btn-lg" disabled="@_busy" @onclick="() => Do(() => Ops.LastTransactionAsync(true))"><Icon Name="printer" /> Drukuj ostatnie potwierdzenie</button>
+                <button class="btn btn-outline btn-lg" disabled="@_busy" @onclick="() => Do(Ops.UploadStatusAsync)"><Icon Name="info" /> Status wysyłki transakcji</button>
+                <button class="btn btn-secondary btn-lg" disabled="@_busy" @onclick="() => _confirmCloseDay = true"><Icon Name="lock" /> Zamknięcie dnia</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>Drukarka fiskalna</h3>
+            <div class="action-grid">
+                <button class="btn btn-outline btn-lg" disabled="@_busy" @onclick="() => Do(Ops.PrintTestAsync)"><Icon Name="printer" /> Wydruk testowy</button>
+                <button class="btn btn-outline btn-lg" disabled="@_busy" @onclick="() => Do(Ops.PrintPickupTestAsync)"><Icon Name="receipt" /> Testowy bilet odbioru</button>
+            </div>
+        </div>
+
+        @if (_busy || !string.IsNullOrEmpty(_output))
+        {
+            <div class="card">
+                <h3>Wynik</h3>
+                @if (_busy)
+                {
+                    <div class="spinner"></div>
+                }
+                else
+                {
+                    <div class="output">@_output</div>
+                }
+            </div>
+        }
+
+        <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px">
+                <h3>Dziennik transakcji</h3>
+                <button class="btn btn-outline btn-sm" @onclick="LoadJournal"><Icon Name="refresh" /> Odśwież</button>
+            </div>
+            <div class="table-wrap">
+                <table class="journal">
+                    <thead>
+                        <tr><th>Data</th><th>Dokument</th><th>Kwota</th><th>Stan</th><th>Karta / rachunek</th><th>Paragon</th><th>Uwagi</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in _journal)
+                        {
+                            <tr @key="r.Id">
+                                <td class="nowrap">@r.CreatedAt.ToString("dd.MM HH:mm:ss")</td>
+                                <td class="nowrap">@(r.DocumentKind == "Invoice" ? $"Faktura {r.CustomerAcronym}" : "Paragon")</td>
+                                <td class="nowrap tabular">@Fmt.Money(r.Amount)</td>
+                                <td><span class="pill @StateClass(r.State)">@StateLabel(r.State)</span></td>
+                                <td>@r.CardResultCode @(r.CardReceiptNumber is null ? "" : $"/ {r.CardReceiptNumber}")</td>
+                                <td class="nowrap">@r.DocumentNumber</td>
+                                <td style="max-width:360px">@r.Error</td>
+                                <td class="nowrap">
+                                    @if (r.CardJson is not null && r.CardResultCode is "0000" or "0002" or "0003")
+                                    {
+                                        <button class="btn btn-ghost btn-sm" disabled="@_busy" @onclick="() => Do(() => Ops.ReprintAsync(r, false))">Drukuj</button>
+                                    }
+                                    @if (r.State is CheckoutState.NeedsAttention or CheckoutState.PaymentApproved)
+                                    {
+                                        <button class="btn btn-ghost btn-sm" disabled="@_busy" @onclick="() => Do(() => Ops.CheckDocumentAsync(r))">Sprawdź dokument</button>
+                                        @if (ServiceOperations.CanIssueDocument(r))
+                                        {
+                                            <button class="btn btn-primary btn-sm" disabled="@_busy" @onclick="() => _issue = r">@(r.DocumentKind == "Invoice" ? "Wystaw fakturę" : "Wystaw paragon")</button>
+                                        }
+                                        @if (r.DocumentNumber is null && r.CardReceiptNumber is not null)
+                                        {
+                                            <button class="btn btn-danger btn-sm" disabled="@_busy" @onclick="() => _reverse = r">Unieważnij</button>
+                                        }
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (_confirmCloseDay)
+{
+    <div class="overlay">
+        <div class="dialog">
+            <h2>Zamknięcie dnia na terminalu</h2>
+            <p class="lead">Terminal wyśle transakcje do rozliczenia i zwróci raport. Raport zostanie wydrukowany na drukarce.</p>
+            <div class="actions">
+                <button class="btn btn-outline btn-lg" @onclick="() => _confirmCloseDay = false">Anuluj</button>
+                <button class="btn btn-primary btn-lg" @onclick="CloseDay">Zamknij dzień</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_issue is { } issue)
+{
+    var lines = ServiceOperations.CartOf(issue);
+    <div class="overlay">
+        <div class="dialog">
+            <h2>@(issue.DocumentKind == "Invoice" ? "Wystawić fakturę?" : "Wystawić paragon?")</h2>
+            <p class="lead">Płatność @Fmt.Money(issue.Amount) z @issue.CreatedAt.ToString("dd.MM HH:mm") została pobrana, a dokumentu nie ma w XL.
+                @(issue.DocumentKind == "Invoice" ? $"Faktura dla {issue.CustomerAcronym} zostanie wystawiona" : "Paragon zostanie wystawiony i wydrukowany fiskalnie")
+                na towary z koszyka klienta:</p>
+            <table class="issue-lines">
+                <tbody>
+                    @foreach (var l in lines)
+                    {
+                        <tr><td>@l.Code<br /><small>@l.Name</small></td><td class="nowrap">@Fmt.Number(l.Quantity) @l.Unit × @Fmt.Money(l.UnitPrice)</td><td class="nowrap"><strong>@Fmt.Money(l.Total)</strong></td></tr>
+                    }
+                </tbody>
+                <tfoot><tr><td colspan="2">Razem</td><td class="nowrap"><strong>@Fmt.Money(lines.Sum(l => l.Total))</strong></td></tr></tfoot>
+            </table>
+            <div class="actions">
+                <button class="btn btn-outline btn-lg" @onclick="() => _issue = null">Anuluj</button>
+                <button class="btn btn-primary btn-lg" @onclick="IssueDocument">@(issue.DocumentKind == "Invoice" ? "Wystaw fakturę" : "Wystaw paragon")</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_reverse is { } rev)
+{
+    <div class="overlay">
+        <div class="dialog">
+            <h2>Unieważnić płatność?</h2>
+            <p class="lead">Kwota @Fmt.Money(rev.Amount), rachunek terminala @rev.CardReceiptNumber. Używaj tylko, gdy dokument sprzedaży nie został wystawiony.</p>
+            <div class="actions">
+                <button class="btn btn-outline btn-lg" @onclick="() => _reverse = null">Anuluj</button>
+                <button class="btn btn-secondary btn-lg" @onclick="Reverse">Unieważnij</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [SupplyParameterFromQuery(Name = "k")] public string? AccessToken { get; set; }
+
+    private bool _authorized;
+    private bool _pinError;
+    private bool _busy;
+    private string? _output;
+    private IReadOnlyList<DeviceStatus>? _status;
+    private IReadOnlyList<CheckoutRecord> _journal = [];
+    private bool _confirmCloseDay;
+    private CheckoutRecord? _reverse;
+    private CheckoutRecord? _issue;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Alerts.Changed += OnAlertsChanged;
+        _authorized = ServiceAccess.Consume(AccessToken);
+        if (_authorized)
+            await LoadAll();
+    }
+
+    private async Task CheckPin(string pin)
+    {
+        _pinError = pin != Options.CurrentValue.ServicePin;
+        if (_pinError)
+            return;
+
+        _authorized = true;
+        await LoadAll();
+    }
+
+    private void OnAlertsChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Alerts.Changed -= OnAlertsChanged;
+
+    private async Task LoadAll()
+    {
+        await LoadJournal();
+        await LoadStatus();
+    }
+
+    private async Task LoadStatus()
+    {
+        _status = null;
+        StateHasChanged();
+        _status = await Ops.GetStatusAsync();
+    }
+
+    private async Task LoadJournal() => _journal = await Ops.RecentAsync();
+
+    private async Task Do(Func<Task<string>> action)
+    {
+        _busy = true;
+        _output = null;
+        StateHasChanged();
+        try
+        {
+            _output = await action();
+        }
+        finally
+        {
+            _busy = false;
+            await LoadJournal();
+        }
+    }
+
+    private Task CloseDay()
+    {
+        _confirmCloseDay = false;
+        return Do(() => Ops.CloseDayAsync(print: true));
+    }
+
+    private Task Reverse()
+    {
+        var r = _reverse!;
+        _reverse = null;
+        return Do(() => Ops.ReverseAsync(r));
+    }
+
+    private Task IssueDocument()
+    {
+        var r = _issue!;
+        _issue = null;
+        return Do(() => Ops.IssueDocumentAsync(r));
+    }
+
+    private static string StateLabel(CheckoutState s) => s switch
+    {
+        CheckoutState.Started => "Rozpoczęta",
+        CheckoutState.PaymentDeclined => "Odrzucona",
+        CheckoutState.PaymentCancelled => "Przerwana",
+        CheckoutState.PaymentApproved => "Opłacona – brak dokumentu",
+        CheckoutState.DocumentCreated => "Dokument wystawiony",
+        CheckoutState.Completed => "Zakończona",
+        CheckoutState.DocumentFailedReversed => "Unieważniona",
+        CheckoutState.NeedsAttention => "Wymaga uwagi",
+        _ => s.ToString()
+    };
+
+    private static string StateClass(CheckoutState s) => s switch
+    {
+        CheckoutState.Completed or CheckoutState.DocumentCreated => "ok",
+        CheckoutState.NeedsAttention or CheckoutState.PaymentApproved => "err",
+        CheckoutState.DocumentFailedReversed or CheckoutState.PaymentDeclined => "warn",
+        _ => ""
+    };
+}

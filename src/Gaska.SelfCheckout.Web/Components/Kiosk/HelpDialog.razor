@@ -1,0 +1,109 @@
+@* Customer help (with a staff call) + staff entry (PIN). *@
+@implements IDisposable
+@inject NavigationManager Nav
+@inject StaffAlerts Alerts
+@inject Microsoft.Extensions.Options.IOptionsMonitor<Gaska.SelfCheckout.Application.Options.KioskOptions> Options
+@inject Microsoft.Extensions.Options.IOptionsMonitor<Gaska.SelfCheckout.Infrastructure.Erp.ErpOptions> Erp
+
+<div class="overlay" @onclick="OnClose">
+    <div class="dialog" @onclick:stopPropagation>
+        @switch (_view)
+        {
+            case View.Info when Alerts.IsActive(StaffAlerts.HelpKey):
+                <div class="result-icon warn ringing"><Icon Name="bell" /></div>
+                <h2>Pracownik został wezwany</h2>
+                <p class="lead">Za chwilę ktoś z obsługi podejdzie do kasy. Możesz w tym czasie kontynuować zakupy.</p>
+                <div class="actions">
+                    <button class="btn btn-primary btn-lg" @onclick="OnClose">Rozumiem</button>
+                    <button class="btn btn-ghost btn-lg" @onclick="() => _view = View.Pin"><Icon Name="lock" /> Obsługa</button>
+                </div>
+                break;
+            case View.Info:
+                <div class="result-icon warn"><Icon Name="help" /></div>
+                <h2>Potrzebujesz pomocy?</h2>
+                <div class="lead" style="text-align:left; display:grid; gap:10px">
+                    <p>• <strong>Skanowanie:</strong> zbliż kod kreskowy produktu do czytnika – produkt pojawi się w koszyku.</p>
+                    <p>• <strong>Brak kodu?</strong> Użyj „Szukaj” (nazwa, kod, EAN, kod dostawcy) albo „Kategorie”.</p>
+                    <p>• <strong>Ilość</strong> zmienisz przyciskami + / − w koszyku.</p>
+                    <p>• <strong>Płatność:</strong> kartą, telefonem lub kodem BLIK – postępuj zgodnie z instrukcjami na terminalu.</p>
+                    @if (Erp.CurrentValue.Units.CustomerNotice is { } notice)
+                    {
+                        <p>• <strong>@notice</strong></p>
+                    }
+                    <p>W razie problemów <strong>wezwij pracownika sklepu</strong>.</p>
+                </div>
+                <div class="actions">
+                    <button class="btn btn-primary btn-lg" @onclick="Alerts.RequestHelp"><Icon Name="bell" /> Wezwij pomoc</button>
+                    <button class="btn btn-outline btn-lg" @onclick="OnClose">Rozumiem</button>
+                    <button class="btn btn-ghost btn-lg" @onclick="() => _view = View.Pin"><Icon Name="lock" /> Obsługa</button>
+                </div>
+                break;
+            case View.Pin:
+                <h2>Panel obsługi</h2>
+                <p class="muted">Wprowadź PIN</p>
+                <PinPad OnEntered="Submit" Error="_error" />
+                <button class="btn btn-ghost" @onclick="OnClose">Anuluj</button>
+                break;
+            case View.Silenced:
+                <div class="result-icon ok"><Icon Name="bell-off" /></div>
+                <h2>Alarm wyciszony</h2>
+                @if (Alerts.Active is { Count: > 0 } faults)
+                {
+                    <ul class="health-problems">
+                        @foreach (var a in faults)
+                        {
+                            <li><strong>@a.Title</strong>@(a.Detail is null ? "" : $": {a.Detail}")</li>
+                        }
+                    </ul>
+                }
+                <div class="actions">
+                    <button class="btn btn-primary btn-lg" @onclick="OnClose">Wróć do kasy</button>
+                    <button class="btn btn-outline btn-lg" @onclick="OpenServicePanel"><Icon Name="settings" /> Panel obsługi</button>
+                </div>
+                break;
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    /// <summary>Only the staff PIN (e.g. from the out-of-service screen).</summary>
+    [Parameter] public bool StaffOnly { get; set; }
+
+    private enum View { Info, Pin, Silenced }
+
+    private View _view;
+    private bool _error;
+
+    protected override void OnInitialized()
+    {
+        _view = StaffOnly ? View.Pin : View.Info;
+        Alerts.Changed += OnAlertsChanged;
+    }
+
+    private void OnAlertsChanged() => InvokeAsync(StateHasChanged);
+
+    private void Submit(string pin)
+    {
+        if (pin != Options.CurrentValue.ServicePin)
+        {
+            _error = true;
+            return;
+        }
+
+        // staff are at the kiosk – the alarm has done its job
+        if (Alerts.IsSounding)
+        {
+            Alerts.AcknowledgeAll();
+            _view = View.Silenced;
+            return;
+        }
+
+        OpenServicePanel();
+    }
+
+    private void OpenServicePanel() => Nav.NavigateTo($"/service?k={ServiceAccess.Issue()}");
+
+    public void Dispose() => Alerts.Changed -= OnAlertsChanged;
+}

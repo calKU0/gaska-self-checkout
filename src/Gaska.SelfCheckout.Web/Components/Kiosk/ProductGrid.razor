@@ -1,0 +1,111 @@
+@* Product grid with "add to cart" buttons; prices are calculated by XL for the customer (progressively). *@
+@inherits SessionComponent
+
+<div class="product-grid @(Compact ? "compact" : null)">
+    @foreach (var p in Items)
+    {
+        var inCart = Session.Cart.Lines.FirstOrDefault(l => l.Product.Id == p.Id);
+        var price = Session.DisplayPrice(p);
+        var primary = p.Stock.Where(s => s.IsPrimary).Sum(s => s.Quantity);
+        var available = p.IsAvailable;
+        <article class="product-card @(inCart is not null ? "in-cart" : null) @(available ? null : "unavailable")" @key="p.Id" aria-disabled="@(!available)">
+            <div class="photo">
+                <Icon Name="box" />
+                <img src="img/product/@p.Id" alt="" loading="lazy" onerror="this.remove()" />
+            </div>
+            <div class="code">@p.Code</div>
+            <div class="name" title="@p.Name">@p.Name</div>
+            <div class="meta">
+                <div>
+                    <div class="price @(price?.IsDiscounted == true ? "discounted" : null)">
+                        @if (price is not null && !available && price.Price <= 0)
+                        {
+                            @* no price in XL – nothing to show for a product that cannot be bought anyway *@
+                        }
+                        else if (price is not null)
+                        {
+                            @Fmt.Money(price.Price)<small> / @p.Unit</small>
+                            @if (price.IsDiscounted)
+                            {
+                                <span class="list-price">@Fmt.Money(price.BasePrice)</span>
+                            }
+                        }
+                        else
+                        {
+                            <span class="price-pending" title="Liczymy Twoją cenę…"></span>
+                        }
+                    </div>
+                    @if (Session.QuantityBreaks(p.Id) is { Count: > 0 } tiers)
+                    {
+                        <div class="tiers">
+                            @foreach (var t in tiers)
+                            {
+                                <span class="tier" title="Cena za 1 @p.Unit przy zakupie od @Fmt.Number(t.Quantity) @p.Unit">
+                                    od @Fmt.Number(t.Quantity) @p.Unit <strong>@Fmt.Money(t.Quote.Price)</strong>
+                                    @if (t.Quote.DiscountPercent > 0)
+                                    {
+                                        <em>−@t.Quote.DiscountPercent%</em>
+                                    }
+                                </span>
+                            }
+                        </div>
+                    }
+                    @if (!available)
+                    {
+                        <div class="unavailable-note">Towar chwilowo niedostępny</div>
+                    }
+                    else
+                    {
+                        <div class="stock">Dostępne: @Fmt.Qty(p.AvailableQuantity, p.Unit)</div>
+                        @if (p.HasSecondaryStock)
+                        {
+                            <div class="secondary-stock">@(primary > 0 ? $"na półce {Fmt.Number(primary)}, reszta" : "towar") do odbioru z magazynu</div>
+                        }
+                    }
+                </div>
+            </div>
+            @if (!available)
+            {
+                @* shown with its price only – never added to the cart (the cart also refuses products out of stock) *@
+                <button class="btn btn-outline btn-block" disabled>
+                    <Icon Name="x" /><span class="label"> Niedostępny</span>
+                </button>
+            }
+            else if (inCart is not null)
+            {
+                <button class="btn btn-primary btn-block" @onclick="() => Session.Add(p)" disabled="@(inCart.Quantity >= p.AvailableQuantity)">
+                    <Icon Name="plus" /><span class="label"> Dodaj kolejną (@Fmt.Number(inCart.Quantity))</span>
+                </button>
+            }
+            else
+            {
+                <button class="btn btn-outline btn-block" @onclick="() => Session.Add(p)">
+                    <Icon Name="cart" /><span class="label"> Dodaj do koszyka</span>
+                </button>
+            }
+        </article>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<Product> Items { get; set; } = [];
+
+    /// <summary>Compact rows (on-screen keyboard open – more results fit on the screen).</summary>
+    [Parameter] public bool Compact { get; set; }
+
+    private string? _pricedKey;
+
+    // after every render – also the ones caused by a session change (login / logout, receipt ↔ invoice), which do not
+    // set new parameters
+    protected override void OnAfterRender(bool firstRender)
+    {
+        // ask for prices only when the visible products or the pricing context change
+        // (a new request makes the previous browsing request obsolete)
+        var key = $"{Session.Pricing}:{string.Join(',', Items.Select(p => p.Id))}";
+        if (key != _pricedKey)
+        {
+            _pricedKey = key;
+            Session.RequestBrowsePrices(Items.Select(p => p.Id));
+        }
+    }
+}

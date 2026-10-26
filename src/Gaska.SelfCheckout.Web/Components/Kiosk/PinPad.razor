@@ -1,0 +1,46 @@
+@* 4-digit PIN entry: dots + numeric keypad, submitted automatically after the last digit. *@
+
+<div class="pin-dots">
+    @for (var i = 0; i < Length; i++)
+    {
+        <i class="@(i < _pin.Length ? "on" : null)"></i>
+    }
+</div>
+@if (Error && _pin.Length == 0)
+{
+    <p style="color: var(--danger); font-weight: 600">Nieprawidłowy PIN</p>
+}
+<div class="numpad">
+    @foreach (var d in new[] { "1", "2", "3", "4", "5", "6", "7", "8", "9" })
+    {
+        <button @onclick="() => Press(d)">@d</button>
+    }
+    <button @onclick='() => _pin = ""'>C</button>
+    <button @onclick='() => Press("0")'>0</button>
+    <button @onclick="() => _pin = _pin[..Math.Max(0, _pin.Length - 1)]">⌫</button>
+</div>
+
+@code {
+    public const int Length = 4;
+
+    /// <summary>Called with the complete PIN; the pad is cleared afterwards.</summary>
+    [Parameter] public EventCallback<string> OnEntered { get; set; }
+
+    /// <summary>Shows "wrong PIN" (set by the parent after a failed attempt).</summary>
+    [Parameter] public bool Error { get; set; }
+
+    private string _pin = "";
+
+    private async Task Press(string digit)
+    {
+        if (_pin.Length >= Length)
+            return;
+        _pin += digit;
+        if (_pin.Length < Length)
+            return;
+
+        var pin = _pin;
+        _pin = "";
+        await OnEntered.InvokeAsync(pin);
+    }
+}

@@ -1,0 +1,53 @@
+@* On-screen keyboard for the touch screen (Polish programmer layout + Polish letters). *@
+<div class="osk" role="group" aria-label="Klawiatura ekranowa">
+    @foreach (var row in Rows)
+    {
+        <div class="osk-row">
+            @foreach (var key in row)
+            {
+                <button type="button" class="osk-key" @onclick="() => Press(key)">@key</button>
+            }
+        </div>
+    }
+    <div class="osk-row bottom">
+        <button type="button" class="osk-key wide accent" @onclick="TogglePolish">@(_polish ? "ABC" : "ĄĘŁ")</button>
+        <button type="button" class="osk-key" @onclick='() => Press("-")'>-</button>
+        <button type="button" class="osk-key space" @onclick='() => Press(" ")'>spacja</button>
+        <button type="button" class="osk-key" @onclick='() => Press(".")'>.</button>
+        <button type="button" class="osk-key wide accent" @onclick="Backspace" aria-label="Usuń znak"><Icon Name="backspace" Class="" /></button>
+        <button type="button" class="osk-key wide primary" @onclick="Clear">Wyczyść</button>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+
+    private bool _polish;
+
+    private static readonly string[][] Latin =
+    [
+        ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
+        ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],
+        ["A", "S", "D", "F", "G", "H", "J", "K", "L"],
+        ["Z", "X", "C", "V", "B", "N", "M", "/"]
+    ];
+
+    private static readonly string[][] PolishRows =
+    [
+        ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
+        ["Ą", "Ć", "Ę", "Ł", "Ń", "Ó", "Ś", "Ź", "Ż"],
+        ["A", "S", "D", "F", "G", "H", "J", "K", "L"],
+        ["Z", "X", "C", "V", "B", "N", "M", "/"]
+    ];
+
+    private string[][] Rows => _polish ? PolishRows : Latin;
+
+    private void TogglePolish() => _polish = !_polish;
+
+    private Task Press(string key) => ValueChanged.InvokeAsync((Value ?? "") + key);
+
+    private Task Backspace() => string.IsNullOrEmpty(Value) ? Task.CompletedTask : ValueChanged.InvokeAsync(Value[..^1]);
+
+    private Task Clear() => ValueChanged.InvokeAsync("");
+}

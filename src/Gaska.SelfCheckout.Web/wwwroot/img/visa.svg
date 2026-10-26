@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 152 94" role="img" aria-label="Visa">
+  <!-- Visa acceptance mark (blue wordmark); replace with the official file from the acquirer if needed -->
+  <rect width="152" height="94" rx="10" fill="#fff"/>
+  <text x="76" y="62" text-anchor="middle" fill="#1a1f71"
+        font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="44" font-weight="900" font-style="italic"
+        letter-spacing="-1">VISA</text>
+</svg>

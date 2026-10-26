@@ -1,0 +1,249 @@
+@* Customer identification. Invoice: tax id (NIP) → ERP match(es) → or registry (GUS / VAT white list) → new customer card.
+   Account (receipt with customer prices): customer card number or tax id → ERP match(es). *@
+@using Gaska.SelfCheckout.Domain.Customers
+@inject ICustomerDirectory Directory
+@inject ICompanyRegistry Registry
+@inject ILogger<CustomerDialog> Logger
+
+<div class="overlay">
+    <div class="dialog">
+        @switch (_step)
+        {
+            case Step.Enter:
+                @if (Account)
+                {
+                    <div class="result-icon warn"><Icon Name="user" /></div>
+                    <h2>Mam konto w GĄSKA</h2>
+                    <p class="lead">Zeskanuj lub wpisz <strong>numer karty klienta</strong> albo <strong>NIP</strong> – pokażemy Twoje ceny</p>
+                }
+                else
+                {
+                    <div class="result-icon warn"><Icon Name="building" /></div>
+                    <h2>Faktura dla firmy</h2>
+                    <p class="lead">Wpisz <strong>NIP</strong> firmy</p>
+                }
+                <div class="code-input @(_code.Length == 0 ? "placeholder" : null)">@(_code.Length == 0 ? (Account ? "Numer karty lub NIP" : "NIP") : _code)</div>
+                @if (_error is not null)
+                {
+                    <p style="color: var(--danger); font-weight: 600">@_error</p>
+                }
+                <div class="numpad">
+                    @foreach (var d in new[] { "1", "2", "3", "4", "5", "6", "7", "8", "9" })
+                    {
+                        <button @onclick="() => Press(d)">@d</button>
+                    }
+                    <button @onclick="Clear">C</button>
+                    <button @onclick='() => Press("0")'>0</button>
+                    <button @onclick="Backspace">⌫</button>
+                </div>
+                <div class="actions">
+                    <button class="btn btn-outline btn-lg" @onclick="() => OnCancel.InvokeAsync()">Anuluj</button>
+                    <button class="btn btn-primary btn-lg" disabled="@(_code.Length < (Account ? 3 : 10))" @onclick="SearchAsync">Dalej</button>
+                </div>
+                break;
+
+            case Step.Busy:
+                <div class="spinner"></div>
+                <h2>@_busyText</h2>
+                break;
+
+            case Step.Choose:
+                <h2>@(Account ? "Wybierz konto" : "Wybierz firmę")</h2>
+                <p class="lead">Do podanego numeru pasuje kilku klientów.</p>
+                <div class="customer-list">
+                    @foreach (var c in _matches)
+                    {
+                        <button class="customer-option" @key="c.Id" @onclick="() => OnSelected.InvokeAsync(c)">
+                            <span class="icon"><Icon Name="building" /></span>
+                            <span><strong>@c.Name</strong><span>@c.AddressLine</span><br /><span>@(string.IsNullOrEmpty(c.TaxId) ? "Osoba prywatna" : "NIP " + TaxId.Format(c.TaxId)) · @c.Acronym</span></span>
+                            <Icon Name="chevron-right" />
+                        </button>
+                    }
+                </div>
+                <button class="btn btn-ghost btn-lg" @onclick="Restart">Wpisz inny numer</button>
+                break;
+
+            case Step.Confirm:
+                <div class="result-icon ok"><Icon Name="building" /></div>
+                <h2>Potwierdź dane firmy</h2>
+                <p class="lead">Nie mamy jeszcze Twojej firmy w bazie. Dane pobraliśmy z rejestru (@_company!.Source) – takie znajdą się na fakturze:</p>
+                @* read-only: the card is created exactly as in the registry; changes only at the staffed checkout *@
+                <dl class="company-card company-data">
+                    <dt>Nazwa</dt><dd><strong>@_company.Name</strong></dd>
+                    <dt>Adres</dt><dd>@_company.StreetLine<br />@_company.PostalCode @_company.City</dd>
+                    <dt>NIP</dt><dd>@TaxId.Format(_company.TaxId)</dd>
+                    @if (!string.IsNullOrEmpty(_company.Regon))
+                    {
+                        <dt>REGON</dt><dd>@_company.Regon</dd>
+                    }
+                </dl>
+                <div class="actions">
+                    <button class="btn btn-outline btn-lg" @onclick="Decline">Dane są niepoprawne</button>
+                    <button class="btn btn-primary btn-lg" @onclick="CreateAsync"><Icon Name="check" /> Potwierdzam dane</button>
+                </div>
+                break;
+
+            case Step.Declined:
+                <div class="result-icon warn"><Icon Name="building" /></div>
+                <h2>Zmiana danych u sprzedawcy</h2>
+                <p class="lead">Na kasie samoobsługowej możemy założyć konto tylko z danymi z rejestru. Zapraszamy do <strong>kasy obsługowej</strong> – sprzedawca poprawi dane firmy i wystawi fakturę.</p>
+                <div class="actions">
+                    <button class="btn btn-ghost btn-lg" @onclick="Restart">Wpisz inny NIP</button>
+                    <button class="btn btn-primary btn-lg" @onclick="() => OnCancel.InvokeAsync()">Rozumiem</button>
+                </div>
+                break;
+        }
+    </div>
+</div>
+
+@code {
+    /// <summary>True – customer account by card number or tax id (receipt); false – invoice by tax id.</summary>
+    [Parameter] public bool Account { get; set; }
+    [Parameter] public EventCallback<Customer> OnSelected { get; set; }
+
+    public const string NoInvoiceMessage =
+        "Faktury dla osób prywatnych nie wystawiamy na kasie samoobsługowej. Zapraszamy do kasy obsługowej – sprzedawca wystawi fakturę.";
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    private enum Step { Enter, Busy, Choose, Confirm, Declined }
+
+    private Step _step = Step.Enter;
+    private string _code = "";
+    private string? _error;
+    private string _busyText = "";
+    private IReadOnlyList<Customer> _matches = [];
+    private CompanyRegistryEntry? _company;
+
+    /// <summary>Code read by the barcode scanner while the dialog is open (customer card or tax id).</summary>
+    public async Task SetCodeAsync(string code)
+    {
+        if (_step != Step.Enter)
+            return;
+        _code = code.Trim();
+        await SearchAsync();
+        StateHasChanged();
+    }
+
+    private void Press(string digit)
+    {
+        _error = null;
+        if (_code.Length < 24)
+            _code += digit;
+    }
+
+    private void Backspace() => _code = _code.Length > 0 ? _code[..^1] : _code;
+
+    private void Clear()
+    {
+        _code = "";
+        _error = null;
+    }
+
+    private void Restart()
+    {
+        _step = Step.Enter;
+        _company = null;
+        _matches = [];
+    }
+
+    /// <summary>The customer does not accept the registry data – no card is created at the kiosk.</summary>
+    private void Decline()
+    {
+        Logger.LogInformation("Registry data of tax id {TaxId} not confirmed by the customer – sent to the staffed checkout", _company?.TaxId);
+        _step = Step.Declined;
+    }
+
+    private async Task SearchAsync()
+    {
+        _error = null;
+        if (!Account && !TaxId.IsValid(_code))
+        {
+            _error = "Nieprawidłowy NIP – sprawdź wpisany numer.";
+            return;
+        }
+
+        _step = Step.Busy;
+        _busyText = Account ? "Szukamy Twojego konta…" : "Szukamy Twojej firmy…";
+        StateHasChanged();
+        try
+        {
+            var found = Account ? await FindAccountAsync(_code) : await Directory.FindByTaxIdAsync(_code);
+            // invoices only for businesses with a tax id – private persons buy with an invoice at the staffed checkout
+            var matches = Account ? found : found.Where(c => c.CanReceiveInvoice).ToList();
+            if (found.Count > 0 && matches.Count == 0)
+            {
+                Logger.LogInformation("Tax id {TaxId} belongs to a private person – no invoice at the kiosk", _code);
+                _error = NoInvoiceMessage;
+                _step = Step.Enter;
+                return;
+            }
+
+            if (matches.Count == 1)
+            {
+                await OnSelected.InvokeAsync(matches[0]);
+                return;
+            }
+
+            if (matches.Count > 1)
+            {
+                _matches = matches;
+                _step = Step.Choose;
+                return;
+            }
+
+            if (Account)
+            {
+                Logger.LogInformation("Customer account {Code} not found (card number / tax id)", _code);
+                _error = "Nie ma takiego klienta w systemie. Skontaktuj się ze sprzedawcą w sklepie.";
+                _step = Step.Enter;
+                return;
+            }
+
+            _busyText = "Pobieramy dane firmy z rejestru GUS…";
+            StateHasChanged();
+            _company = await Registry.FindByTaxIdAsync(_code);
+            if (_company is null)
+            {
+                _error = "Nie znaleźliśmy firmy o tym NIP w rejestrach. Poproś obsługę o pomoc.";
+                _step = Step.Enter;
+                return;
+            }
+
+            _step = Step.Confirm;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Customer lookup failed");
+            _error = "Chwilowy problem z wyszukiwaniem. Spróbuj ponownie.";
+            _step = Step.Enter;
+        }
+    }
+
+    /// <summary>Customer account: card number, and the tax id when the code is a valid NIP.</summary>
+    private async Task<IReadOnlyList<Customer>> FindAccountAsync(string code)
+    {
+        var byCard = await Directory.FindByCardAsync(code);
+        if (!TaxId.IsValid(code))
+            return byCard;
+        var byTaxId = await Directory.FindByTaxIdAsync(code);
+        return byCard.Concat(byTaxId).DistinctBy(c => c.Id).ToList();
+    }
+
+    private async Task CreateAsync()
+    {
+        _step = Step.Busy;
+        _busyText = "Zakładamy kartę klienta…";
+        StateHasChanged();
+        try
+        {
+            var customer = await Directory.CreateAsync(_company!);
+            await OnSelected.InvokeAsync(customer);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Customer card could not be created for tax id {TaxId}", _company?.TaxId);
+            _error = "Nie udało się założyć karty klienta. Poproś obsługę o pomoc.";
+            _step = Step.Enter;
+        }
+    }
+}

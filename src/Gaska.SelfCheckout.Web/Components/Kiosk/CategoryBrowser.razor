@@ -1,0 +1,71 @@
+@* Browsing the category tree (Erp:CategoryRootId) – only non-empty categories. *@
+@inject IProductCatalog Catalog
+@inject KioskSession Session
+
+<nav class="breadcrumbs" aria-label="Ścieżka kategorii">
+    <button class="crumb @(_current is null ? "current" : null)" @onclick="() => Open(null)">Wszystkie kategorie</button>
+    @foreach (var c in _path)
+    {
+        <span class="crumb-sep">›</span>
+        <button class="crumb @(c.Id == _current?.Id ? "current" : null)" @onclick="() => Open(c)">@c.Name</button>
+    }
+</nav>
+
+@if (_loading && _children.Count == 0)
+{
+    <div class="empty-state"><div class="spinner"></div></div>
+}
+else
+{
+    @if (_children.Count > 0)
+    {
+        <div class="category-grid" style="margin-bottom: 20px">
+            @foreach (var c in _children)
+            {
+                <button class="category-tile" @key="c.Id" @onclick="() => Open(c)">
+                    <span class="icon">
+                        <Icon Name="@(c.HasChildren ? "grid" : "box")" />
+                        <img src="img/category/@c.Id" alt="" loading="lazy" onerror="this.remove()" />
+                    </span>
+                    <span class="name">@c.Name</span>
+                    <span class="count">@c.ProductCount @Plural(c.ProductCount)</span>
+                </button>
+            }
+        </div>
+    }
+    else if (_current is null)
+    {
+        <div class="empty-state">
+            <Icon Name="grid" />
+            <h3>Brak kategorii</h3>
+            <p>Katalog jest wczytywany – spróbuj za chwilę.</p>
+        </div>
+    }
+
+    @if (_current is not null)
+    {
+        <ProductBrowser CategoryId="_current.Id" ShowKeyboard="false" Placeholder="@($"Zawęź w kategorii „{_current.Name}”: nazwa, kod…")" />
+    }
+}
+
+@code {
+    private Category? _current;
+    private IReadOnlyList<Category> _children = [];
+    private IReadOnlyList<Category> _path = [];
+    private bool _loading;
+
+    protected override Task OnInitializedAsync() => Open(null);
+
+    private async Task Open(Category? category)
+    {
+        Session.Touch();
+        _loading = true;
+        _current = category;
+        _children = await Catalog.GetCategoriesAsync(category?.Id);
+        _path = category is null ? [] : await Catalog.GetCategoryPathAsync(category.Id);
+        _loading = false;
+    }
+
+    private static string Plural(int n) =>
+        n == 1 ? "produkt" : (n % 10 is >= 2 and <= 4 && n % 100 is < 12 or > 14) ? "produkty" : "produktów";
+}

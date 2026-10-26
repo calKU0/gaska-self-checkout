@@ -1,0 +1,422 @@
+@page "/"
+@implements IAsyncDisposable
+@inject KioskSession Session
+@inject CheckoutCoordinator Coordinator
+@inject KioskHealthMonitor Health
+@inject StaffAlerts Alerts
+@inject IJSRuntime JS
+@inject Microsoft.Extensions.Options.IOptionsMonitor<Gaska.SelfCheckout.Application.Options.KioskOptions> Options
+
+<PageTitle>GĄSKA – Kasa samoobsługowa</PageTitle>
+
+<div class="kiosk-root" @onpointerdown="Session.Touch">
+<div class="kiosk">
+    <header class="topbar">
+        <img class="topbar-logo" src="img/gaska-logo.png" alt="GĄSKA" />
+        <div class="topbar-title">
+            <strong>Kasa samoobsługowa</strong>
+            <span>Części i akcesoria do maszyn rolniczych</span>
+        </div>
+        <div class="topbar-spacer"></div>
+        @if (Session.Customer is { } customer)
+        {
+            <button class="customer-chip" @onclick="() => OpenCustomerDialog(account: !Session.IsInvoice)" title="@(Session.IsInvoice ? "Zmień firmę" : "Zmień konto")">
+                <Icon Name="@(Session.IsInvoice ? "building" : "user")" />
+                <span class="text">
+                    <strong>@customer.Name</strong>
+                    <span>@(Session.IsInvoice ? "Faktura · NIP " + Gaska.SelfCheckout.Domain.Customers.TaxId.Format(customer.TaxId) : "Paragon")</span>
+                </span>
+            </button>
+            <button class="btn btn-ghost btn-icon logout-btn" @onclick="Session.ForgetCustomer" title="Wyloguj" aria-label="Wyloguj"><Icon Name="logout" /></button>
+            @if (Session.IsInvoice)
+            {
+                <button class="btn btn-outline" @onclick="Session.SwitchToReceipt"><Icon Name="receipt" /> Chcę paragon</button>
+            }
+            else if (Options.CurrentValue.InvoicesEnabled)
+            {
+                <button class="btn btn-outline" @onclick="InvoiceForAccount"><Icon Name="building" /> Chcę fakturę</button>
+            }
+        }
+        else if (!Session.WelcomeVisible)
+        {
+            <button class="btn btn-outline" @onclick="() => OpenCustomerDialog(account: true)"><Icon Name="user" /> Mam konto</button>
+            @if (Options.CurrentValue.InvoicesEnabled)
+            {
+                <button class="btn btn-outline" @onclick="() => OpenCustomerDialog(account: false)"><Icon Name="building" /> Chcę fakturę</button>
+            }
+        }
+        <span class="topbar-clock">@_now.ToString("HH:mm")</span>
+        @if (Alerts.IsActive(StaffAlerts.HelpKey))
+        {
+            <button class="btn btn-primary help-called" @onclick="() => _help = true"><Icon Name="bell" /> Wezwano pomoc</button>
+        }
+        else
+        {
+            <button class="btn btn-outline" @onclick="() => _help = true"><Icon Name="help" /> Pomoc</button>
+        }
+    </header>
+
+    <main class="workspace">
+        <section class="panel" aria-label="Produkty">
+            <div class="modes" role="tablist">
+                <button class="mode @(Session.Mode == ShoppingMode.Scan ? "active" : null)" role="tab" @onclick="() => Session.SetMode(ShoppingMode.Scan)">
+                    <Icon Name="scan" /><span>Skanuj</span>
+                </button>
+                <button class="mode @(Session.Mode == ShoppingMode.Search ? "active" : null)" role="tab" @onclick="() => Session.SetMode(ShoppingMode.Search)">
+                    <Icon Name="search" /><span>Szukaj</span>
+                </button>
+                <button class="mode @(Session.Mode == ShoppingMode.Categories ? "active" : null)" role="tab" @onclick="() => Session.SetMode(ShoppingMode.Categories)">
+                    <Icon Name="grid" /><span>Kategorie</span>
+                </button>
+            </div>
+            <div class="panel-body">
+                @switch (Session.Mode)
+                {
+                    case ShoppingMode.Search:
+                        <ProductBrowser />
+                        break;
+                    case ShoppingMode.Categories:
+                        <CategoryBrowser />
+                        break;
+                    default:
+                        <div class="scan-hero">
+                            <div class="scan-hero-inner">
+                                <div class="scan-illustration"><Icon Name="scan" StrokeWidth="1.4" /></div>
+                                <h1>Zeskanuj kod kreskowy</h1>
+                                <p>Zbliż kod kreskowy produktu do czytnika. Produkt automatycznie trafi do koszyka.</p>
+                                <div class="scan-hero-actions">
+                                    <button class="btn btn-outline btn-lg" @onclick="() => Session.SetMode(ShoppingMode.Search)"><Icon Name="search" /> Brak kodu? Wyszukaj</button>
+                                    <button class="btn btn-outline btn-lg" @onclick="() => Session.SetMode(ShoppingMode.Categories)"><Icon Name="grid" /> Przeglądaj kategorie</button>
+                                </div>
+                            </div>
+                        </div>
+                        break;
+                }
+            </div>
+        </section>
+
+        <CartPanel Open="_cartOpen" OnClose="() => _cartOpen = false" OnPay="OpenPayment" OnCancelShopping="RequestCancelShopping" />
+    </main>
+
+    <div class="cart-bar">
+        <div class="sum">
+            <strong>@(Session.PricesPending ? "…" : Fmt.Money(Session.Cart.Total))</strong>
+            <span>@Fmt.Number(Session.Cart.ItemCount) szt. w koszyku</span>
+        </div>
+        <button class="btn btn-outline btn-lg" @onclick="() => _cartOpen = true"><Icon Name="cart" /> Koszyk</button>
+        <button class="btn btn-primary btn-lg" disabled="@(Session.Cart.IsEmpty || Session.PricesPending)" @onclick="OpenPayment">Zapłać</button>
+    </div>
+</div>
+
+<ToastHost />
+
+@if (Session.WelcomeVisible && !_paying)
+{
+    <WelcomeScreen OnReceipt="() => Session.StartReceipt()" OnInvoice="() => OpenCustomerDialog(account: false)" />
+}
+
+@if (_customerDialog && !_paying)
+{
+    <CustomerDialog @ref="_customerDialogRef" @key="_accountDialog" Account="_accountDialog" OnSelected="SelectCustomer" OnCancel="() => _customerDialog = false" />
+}
+
+@if (_paying)
+{
+    <PaymentFlow OnClose="ClosePayment" OnCompleted="CompletePurchase" />
+}
+
+@if (_help)
+{
+    <HelpDialog OnClose="() => _help = false" />
+}
+
+@if (_noInvoice)
+{
+    <div class="overlay">
+        <div class="dialog">
+            <div class="result-icon warn"><Icon Name="building" /></div>
+            <h2>Faktura u sprzedawcy</h2>
+            <p class="lead">@CustomerDialog.NoInvoiceMessage</p>
+            <button class="btn btn-primary btn-xl" @onclick="() => _noInvoice = false">Rozumiem</button>
+        </div>
+    </div>
+}
+
+@if (_confirmCancel)
+{
+    <div class="overlay">
+        <div class="dialog">
+            <div class="result-icon warn"><Icon Name="trash" /></div>
+            <h2>Anulować zakupy?</h2>
+            <p class="lead">Wszystkie produkty zostaną usunięte z koszyka.</p>
+            <div class="actions">
+                <button class="btn btn-outline btn-lg" @onclick="() => _confirmCancel = false">Nie, wracam</button>
+                <button class="btn btn-secondary btn-lg" @onclick="CancelShopping">Tak, anuluj</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_idleCountdown > 0)
+{
+    <div class="overlay">
+        <div class="dialog">
+            <div class="result-icon warn"><Icon Name="help" /></div>
+            <h2>Czy nadal robisz zakupy?</h2>
+            <p class="lead">Z powodu braku aktywności koszyk zostanie wyczyszczony za <strong>@_idleCountdown s</strong>.</p>
+            <button class="btn btn-primary btn-xl" @onclick="StillHere">Tak, kontynuuję</button>
+        </div>
+    </div>
+}
+
+@if (OutOfService)
+{
+    @* above everything (also a cart in progress); a running payment is finished first and its result is shown *@
+    <div class="overlay out-of-service">
+        <div class="dialog">
+            <div class="result-icon err"><Icon Name="alert" /></div>
+            <h2>Kasa chwilowo nieczynna</h2>
+            <p class="lead">Przepraszamy – wystąpił problem techniczny. Zapraszamy do kasy obsługiwanej przez sprzedawcę.</p>
+            @if (!Session.Cart.IsEmpty)
+            {
+                <p class="muted">Produkty z koszyka nie zostały zakupione – nie pobrano żadnej płatności.</p>
+            }
+            <ul class="health-problems">
+                @foreach (var p in Health.Problems)
+                {
+                    <li><strong>@p.Name:</strong> @p.Message</li>
+                }
+            </ul>
+            <button class="btn btn-ghost" @onclick="() => _staffPin = true"><Icon Name="lock" /> Obsługa</button>
+        </div>
+    </div>
+
+    @if (_staffPin)
+    {
+        <HelpDialog StaffOnly OnClose="() => _staffPin = false" />
+    }
+}
+
+
+</div>
+
+@code {
+    private DotNetObjectReference<Kiosk>? _ref;
+    private IJSObjectReference? _module;
+    private Timer? _timer;
+    private DateTime _now = DateTime.Now;
+    private bool _paying;
+    private bool _help;
+    private bool _cartOpen;
+    private bool _confirmCancel;
+    private bool _customerDialog;
+    private bool _accountDialog;
+    private bool _noInvoice;
+    private CustomerDialog? _customerDialogRef;
+    private int _idleCountdown;
+    private bool _staffPin;
+
+    /// <summary>A connection failed – the sale is stopped, except for a payment already running (or its result).</summary>
+    private bool OutOfService => Health.OutOfService && !Coordinator.Status.IsRunning && Coordinator.Status.Result is null;
+
+    protected override void OnInitialized()
+    {
+        Session.Changed += OnSessionChanged;
+        Health.Changed += OnSessionChanged;
+        Alerts.Changed += OnSessionChanged;
+        // a payment is running (e.g. after a page reload) – show its state
+        var status = Coordinator.Status;
+        _paying = status.IsRunning || status.Result is not null;
+        _timer = new Timer(_ => InvokeAsync(Tick), null, 1000, 1000);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+        _ref = DotNetObjectReference.Create(this);
+        _module = await JS.InvokeAsync<IJSObjectReference>("import", "./js/kiosk.js");
+        await _module.InvokeVoidAsync("init", _ref);
+    }
+
+    [JSInvokable]
+    public async Task OnScanned(string code)
+    {
+        _idleCountdown = 0;
+        if (OutOfService)
+            return;
+        if (_paying)
+        {
+            Session.ShowToast(ToastKind.Info, "Trwa płatność", "Dokończ płatność, aby dodać kolejne produkty.");
+            return;
+        }
+
+        if (_customerDialog && _customerDialogRef is not null)
+        {
+            // customer card / tax id scanned in the customer dialog
+            await _customerDialogRef.SetCodeAsync(code);
+            return;
+        }
+
+        _help = false;
+        _confirmCancel = false;
+        await Session.ScanAsync(code);
+    }
+
+    private void OnSessionChanged() => InvokeAsync(StateHasChanged);
+
+    private void OpenPayment()
+    {
+        if (Session.Cart.IsEmpty || OutOfService)
+            return;
+        _cartOpen = false;
+        _paying = true;
+        Session.Touch();
+    }
+
+    private void ClosePayment()
+    {
+        _paying = false;
+        Session.Touch();
+    }
+
+    private void OpenCustomerDialog(bool account)
+    {
+        _accountDialog = account;
+        _customerDialog = true;
+    }
+
+    /// <summary>
+    /// Invoice for the customer already identified by their account: a business with a tax id switches to the invoice
+    /// without asking for the tax id again; a private person is sent to the staffed checkout.
+    /// </summary>
+    private void InvoiceForAccount()
+    {
+        if (Session.Customer is not { } customer)
+        {
+            OpenCustomerDialog(account: false);
+            return;
+        }
+
+        if (!customer.CanReceiveInvoice)
+        {
+            _noInvoice = true;
+            return;
+        }
+
+        Session.StartInvoice(customer);
+    }
+
+    private void SelectCustomer(Gaska.SelfCheckout.Domain.Customers.Customer customer)
+    {
+        _customerDialog = false;
+        if (_accountDialog)
+            Session.IdentifyCustomer(customer);
+        else
+            Session.StartInvoice(customer);
+    }
+
+    private void CompletePurchase()
+    {
+        _paying = false;
+        _cartOpen = false;
+        _customerDialog = false;
+        Session.Reset();
+    }
+
+    private void RequestCancelShopping()
+    {
+        // nothing to lose – back to the start screen without asking
+        if (Session.Cart.IsEmpty)
+            CancelShopping();
+        else
+            _confirmCancel = true;
+    }
+
+    private void CancelShopping()
+    {
+        _confirmCancel = false;
+        _cartOpen = false;
+        _customerDialog = false;
+        Session.Reset();
+    }
+
+    /// <summary>
+    /// Inactivity: closes every dialog first and then resets the session – Session.Reset re-renders synchronously,
+    /// so a dialog closed after it would stay on the screen.
+    /// </summary>
+    private void ReturnToStart()
+    {
+        _help = false;
+        _confirmCancel = false;
+        _customerDialog = false;
+        _noInvoice = false;
+        _cartOpen = false;
+        Session.Reset();
+        StateHasChanged();
+    }
+
+    private void StillHere()
+    {
+        _idleCountdown = 0;
+        Session.Touch();
+    }
+
+    private void Tick()
+    {
+        var minuteChanged = _now.Minute != DateTime.Now.Minute;
+        var hadCountdown = _idleCountdown > 0;
+        _now = DateTime.Now;
+        Session.ExpireToasts();
+
+        var idle = (DateTime.Now - Session.LastActivity).TotalSeconds;
+        var limit = Math.Max(30, Options.CurrentValue.IdleTimeoutSeconds);
+        if (_paying || Coordinator.Status.IsRunning || idle <= limit)
+        {
+            _idleCountdown = 0;
+        }
+        else
+        {
+            if (Session.Cart.IsEmpty)
+            {
+                _idleCountdown = 0;
+                if (!Session.WelcomeVisible || _help || _customerDialog)
+                    ReturnToStart();
+            }
+            else if (_idleCountdown == 0)
+            {
+                _idleCountdown = 30;
+            }
+            else if (--_idleCountdown <= 0)
+            {
+                _idleCountdown = 0;
+                ReturnToStart();
+            }
+        }
+
+        if (minuteChanged || hadCountdown || _idleCountdown > 0)
+            StateHasChanged();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Session.Changed -= OnSessionChanged;
+        Health.Changed -= OnSessionChanged;
+        Alerts.Changed -= OnSessionChanged;
+        if (_timer is not null)
+            await _timer.DisposeAsync();
+        try
+        {
+            if (_module is not null)
+            {
+                await _module.InvokeVoidAsync("dispose");
+                await _module.DisposeAsync();
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+
+        _ref?.Dispose();
+    }
+}

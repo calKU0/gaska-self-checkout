@@ -1,0 +1,347 @@
+@* Payment flow: method choice → terminal → sales document → confirmation → thank-you screen. *@
+@implements IDisposable
+@inject CheckoutCoordinator Coordinator
+@inject KioskSession Session
+@inject Gaska.SelfCheckout.Infrastructure.Erp.Catalog.CatalogCache CatalogCache
+@inject Microsoft.Extensions.Options.IOptionsMonitor<Gaska.SelfCheckout.Application.Options.KioskOptions> KioskOptions
+
+<div class="overlay" role="dialog" aria-modal="true" aria-label="Płatność">
+    <div class="dialog">
+        @if (_status.IsRunning)
+        {
+            <div class="steps">
+                <span class="step @StepClass(1)">1. Płatność</span>
+                <span class="step @StepClass(2)">2. @(Session.IsInvoice ? "Faktura" : "Paragon")</span>
+                <span class="step @StepClass(3)">3. Potwierdzenie</span>
+            </div>
+
+            @if (_status.Stage is CheckoutStage.Preparing or CheckoutStage.WaitingForPayment)
+            {
+                <div class="amount-big">@Fmt.Money(_amount)</div>
+
+                @if (_status.Prompt is { } prompt)
+                {
+                    <p class="lead"><strong>@prompt.Text</strong></p>
+                    @if (prompt.Kind == TerminalPromptKind.Numeric)
+                    {
+                        <div class="terminal-message">@(string.IsNullOrEmpty(_numeric) ? "—" : _numeric)</div>
+                        <div class="numpad">
+                            @foreach (var d in new[] { "1", "2", "3", "4", "5", "6", "7", "8", "9" })
+                            {
+                                <button @onclick="() => _numeric += d">@d</button>
+                            }
+                            <button @onclick='() => _numeric = ""'>C</button>
+                            <button @onclick='() => _numeric += "0"'>0</button>
+                            <button @onclick="() => _numeric = _numeric.Length > 0 ? _numeric[..^1] : _numeric">⌫</button>
+                        </div>
+                        <div class="actions">
+                            <button class="btn btn-outline btn-lg" @onclick="() => Answer(TerminalReply.Cancel)">Anuluj</button>
+                            <button class="btn btn-primary btn-lg" disabled="@(_numeric.Length == 0)" @onclick="() => Answer(TerminalReply.Of(_numeric))">Zatwierdź</button>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="prompt-options">
+                            @foreach (var option in prompt.Options)
+                            {
+                                <button class="btn btn-primary btn-xl" @onclick="() => Answer(TerminalReply.Of(option.Value))">@option.Label</button>
+                            }
+                        </div>
+                        @if (prompt.Kind == TerminalPromptKind.Choice)
+                        {
+                            <button class="btn btn-ghost" @onclick="() => Answer(TerminalReply.Cancel)">Anuluj</button>
+                        }
+                    }
+                }
+                else
+                {
+                    <div class="terminal-anim">
+                        <span class="pulse"></span>
+                        @if (_choice == PaymentChoice.Blik)
+                        {
+                            <img class="blik-logo" src="img/blik.svg" alt="BLIK" />
+                        }
+                        else
+                        {
+                            <Icon Name="terminal" StrokeWidth="1.4" />
+                        }
+                    </div>
+                    <p class="lead">
+                        @if (_choice == PaymentChoice.Blik)
+                        {
+                            <text>Wpisz <strong>kod BLIK</strong> na terminalu płatniczym i potwierdź płatność w aplikacji banku.</text>
+                        }
+                        else
+                        {
+                            <text>Przyłóż, włóż lub przeciągnij <strong>kartę</strong> przy terminalu płatniczym.</text>
+                        }
+                    </p>
+                    <div class="terminal-message">@(_status.TerminalMessage ?? (_status.Stage == CheckoutStage.Preparing ? "Łączenie z terminalem…" : _choice == PaymentChoice.Blik ? "Oczekiwanie na kod BLIK…" : "Oczekiwanie na kartę…"))</div>
+                    <button class="btn btn-outline btn-lg" @onclick="Cancel" disabled="@_cancelRequested">
+                        @(_cancelRequested ? "Anulowanie…" : "Anuluj płatność")
+                    </button>
+                }
+            }
+            else if (_status.Prompt is { } question)
+            {
+                @* after the payment: e.g. "print the payment confirmation?" *@
+                <div class="result-icon ok"><Icon Name="check" StrokeWidth="2.5" /></div>
+                <h2>Płatność przyjęta</h2>
+                <p class="lead"><strong>@question.Text</strong></p>
+                <div class="prompt-options">
+                    @foreach (var option in question.Options)
+                    {
+                        <button class="btn @(option.Value == "0" ? "btn-primary" : "btn-outline") btn-xl" @onclick="() => Answer(TerminalReply.Of(option.Value))">@option.Label</button>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="spinner"></div>
+                <h2>@_status.Message</h2>
+                <p class="lead">Nie odchodź od kasy – za chwilę wydrukujemy dokumenty.</p>
+            }
+        }
+        else if (_status.Result is { } result)
+        {
+            @switch (result.Kind)
+            {
+                case CheckoutResultKind.Success:
+                    <div class="result-icon ok"><Icon Name="check" StrokeWidth="2.5" /></div>
+                    <h1>Dziękujemy za zakupy!</h1>
+                    @if (result.Record.DocumentKind == "Invoice")
+                    {
+                        <p class="lead">Płatność <strong>@Fmt.Money(result.Record.Amount)</strong> przyjęta.@if (result.Record.SlipPrinted)
+                        {<br />@:Odbierz <strong>potwierdzenie płatności</strong> z drukarki.
+                        }</p>
+                        <div class="company-card" style="border-color: var(--yellow); background: var(--yellow-50)">
+                            <strong><Icon Name="receipt" Class="inline-icon" /> Faktura @result.Record.DocumentNumber zostanie wysłana do KSeF</strong>
+                            <span>Nie drukujemy faktury – otrzymasz ją przez Krajowy System e-Faktur (KSeF) na NIP swojej firmy.</span>
+                        </div>
+                    }
+                    else
+                    {
+                        <p class="lead">Płatność <strong>@Fmt.Money(result.Record.Amount)</strong> przyjęta.<br />Odbierz <strong>paragon</strong>@(result.Record.SlipPrinted ? " i potwierdzenie płatności" : "") z drukarki.</p>
+                    }
+                    @if (!string.IsNullOrEmpty(result.Record.DocumentNumber))
+                    {
+                        <p class="muted">Dokument: @result.Record.DocumentNumber</p>
+                    }
+                    @if (result.RequiresPickup)
+                    {
+                        <div class="company-card" style="border-color: var(--yellow); background: var(--yellow-50)">
+                            <strong><Icon Name="map" Class="inline-icon" /> Część towaru odbierzesz w magazynie</strong>
+                            <span>Wydrukowaliśmy dla Ciebie bilet odbioru z kodem QR, listą produktów i mapką dojazdu – pokaż go w punkcie odbioru towaru.</span>
+                        </div>
+                    }
+                    <button class="btn btn-primary btn-xl" @onclick="Finish">Zakończ</button>
+                    <p class="countdown">Ekran zamknie się automatycznie za @_countdown s</p>
+                    break;
+
+                case CheckoutResultKind.Declined:
+                case CheckoutResultKind.Cancelled:
+                    <div class="result-icon err"><Icon Name="x" StrokeWidth="2.5" /></div>
+                    <h1>@(result.Kind == CheckoutResultKind.Cancelled ? "Płatność przerwana" : "Płatność odrzucona")</h1>
+                    <p class="lead">@result.Message</p>
+                    <div class="actions">
+                        <button class="btn btn-outline btn-lg" @onclick="BackToCart">Wróć do koszyka</button>
+                        <button class="btn btn-primary btn-lg" @onclick="Retry">Spróbuj ponownie</button>
+                    </div>
+                    break;
+
+                case CheckoutResultKind.ReversedAfterError:
+                    <div class="result-icon warn"><Icon Name="alert" /></div>
+                    <h1>Nie udało się zakończyć zakupu</h1>
+                    <p class="lead">@result.Message</p>
+                    <div class="actions">
+                        <button class="btn btn-outline btn-lg" @onclick="BackToCart">Wróć do koszyka</button>
+                    </div>
+                    break;
+
+                default:
+                    <div class="result-icon err"><Icon Name="alert" /></div>
+                    <h1>Potrzebna pomoc obsługi</h1>
+                    <p class="lead">@result.Message</p>
+                    <p class="muted">Numer transakcji: @result.Record.Id.ToString()[..8].ToUpperInvariant()</p>
+                    <div class="actions">
+                        <button class="btn btn-outline btn-lg" @onclick="BackToCart">Zamknij</button>
+                    </div>
+                    break;
+            }
+        }
+        else if (_changes.Count > 0)
+        {
+            <div class="result-icon warn"><Icon Name="info" /></div>
+            <h2>Zmiany w koszyku</h2>
+            <div class="lead" style="text-align:left">
+                @foreach (var c in _changes)
+                {
+                    <p style="margin: 6px 0">• @c</p>
+                }
+            </div>
+            <div class="amount-big">@Fmt.Money(Session.Cart.Total)</div>
+            <div class="actions">
+                <button class="btn btn-outline btn-lg" @onclick="BackToCart">Wróć do koszyka</button>
+                @if (!Session.Cart.IsEmpty)
+                {
+                    <button class="btn btn-primary btn-lg" @onclick="() => _changes.Clear()">Kontynuuj</button>
+                }
+            </div>
+        }
+        else
+        {
+            <h2>Wybierz sposób płatności</h2>
+            <div class="amount-big">@Fmt.Money(Session.Cart.Total)</div>
+            <div class="pay-methods">
+                <button class="pay-method" @onclick="() => Start(PaymentChoice.Card)" disabled="@_preparing">
+                    <span class="icon cards"><img src="img/visa.svg" alt="Visa" /><img src="img/mastercard.svg" alt="Mastercard" /></span>
+                    <strong>Karta płatnicza</strong>
+                    <span>karta, telefon, zegarek</span>
+                </button>
+                <button class="pay-method" @onclick="() => Start(PaymentChoice.Blik)" disabled="@_preparing">
+                    <span class="icon blik"><img class="blik-logo" src="img/blik.svg" alt="BLIK" /></span>
+                    <strong>BLIK</strong>
+                    <span>kod z aplikacji banku</span>
+                </button>
+            </div>
+            <button class="btn btn-ghost btn-lg" @onclick="BackToCart" disabled="@_preparing"><Icon Name="arrow-left" /> Wróć do koszyka</button>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnCompleted { get; set; }
+
+    private CheckoutStatus _status = CheckoutStatus.Idle;
+    private PaymentChoice _choice;
+    private decimal _amount;
+    private bool _preparing;
+    private bool _cancelRequested;
+    private string _numeric = "";
+    private readonly List<string> _changes = [];
+    private int _countdown;
+    private Timer? _timer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Coordinator.StatusChanged += OnStatus;
+        _status = Coordinator.Status;
+        _amount = Session.Cart.Total;
+        if (!_status.IsRunning && _status.Result is null)
+        {
+            // current prices and stock right before the payment
+            _preparing = true;
+            try
+            {
+                _changes.AddRange(await Session.RefreshBeforePaymentAsync());
+            }
+            catch
+            {
+                // no database connection – XL validates the document anyway when it is created
+            }
+            finally
+            {
+                _preparing = false;
+            }
+        }
+        else if (_status.Result is { IsSuccess: true })
+        {
+            StartCountdown();
+        }
+    }
+
+    private void Start(PaymentChoice choice)
+    {
+        // customer prices still being calculated – the document must not be issued at list prices
+        if (Session.Cart.IsEmpty || Session.PricesPending)
+            return;
+        _choice = choice;
+        _amount = Session.Cart.Total;
+        _cancelRequested = false;
+        Session.Touch();
+        if (!Coordinator.TryStart(Session.CreateCheckoutRequest(), choice))
+            Session.ShowToast(ToastKind.Warning, "Kasa zajęta", "Trwa inna operacja – spróbuj za chwilę.");
+    }
+
+    private void Cancel()
+    {
+        _cancelRequested = true;
+        Coordinator.Cancel();
+    }
+
+    private void Answer(TerminalReply reply)
+    {
+        _numeric = "";
+        Coordinator.Answer(reply);
+    }
+
+    private void OnStatus(CheckoutStatus status)
+    {
+        _ = InvokeAsync(async () =>
+        {
+            var wasRunning = _status.IsRunning;
+            _status = status;
+            if (wasRunning && !status.IsRunning && status.Result is { IsSuccess: true })
+            {
+                StartCountdown();
+                _ = CatalogCache.RefreshAsync();
+            }
+            if (status.Prompt is null)
+                _numeric = "";
+            StateHasChanged();
+            await Task.CompletedTask;
+        });
+    }
+
+    private void StartCountdown()
+    {
+        _countdown = Math.Max(5, KioskOptions.CurrentValue.ThankYouSeconds + (_status.Result?.RequiresPickup == true ? 10 : 0));
+        _timer?.Dispose();
+        _timer = new Timer(_ => InvokeAsync(async () =>
+        {
+            _countdown--;
+            if (_countdown <= 0)
+                await Finish();
+            else
+                StateHasChanged();
+        }), null, 1000, 1000);
+    }
+
+    private async Task Finish()
+    {
+        _timer?.Dispose();
+        _timer = null;
+        Coordinator.Acknowledge();
+        await OnCompleted.InvokeAsync();
+    }
+
+    private async Task BackToCart()
+    {
+        Coordinator.Acknowledge();
+        await OnClose.InvokeAsync();
+    }
+
+    private void Retry()
+    {
+        Coordinator.Acknowledge();
+        _status = Coordinator.Status;
+    }
+
+    private string? StepClass(int step)
+    {
+        var current = _status.Stage switch
+        {
+            CheckoutStage.Preparing or CheckoutStage.WaitingForPayment => 1,
+            CheckoutStage.CreatingDocument or CheckoutStage.Reversing => 2,
+            _ => 3
+        };
+        return step < current ? "done" : step == current ? "active" : null;
+    }
+
+    public void Dispose()
+    {
+        Coordinator.StatusChanged -= OnStatus;
+        _timer?.Dispose();
+    }
+}

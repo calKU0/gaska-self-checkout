@@ -1,0 +1,56 @@
+@* Start screen – the customer chooses the sales document. Scanning a product starts a receipt. *@
+@inject Microsoft.Extensions.Options.IOptionsMonitor<Gaska.SelfCheckout.Application.Options.KioskOptions> Options
+@inject Microsoft.Extensions.Options.IOptionsMonitor<Gaska.SelfCheckout.Infrastructure.Erp.ErpOptions> Erp
+
+<div class="welcome">
+    <div class="welcome-top">
+        <img src="img/gaska-logo.png" alt="GĄSKA" />
+        <span class="topbar-clock">@DateTime.Now.ToString("HH:mm")</span>
+    </div>
+    <div class="welcome-center">
+        <div class="welcome-main">
+            <h1>Kasa <em>samoobsługowa</em></h1>
+            <p>Wybierz dokument sprzedaży lub po prostu zeskanuj pierwszy produkt</p>
+            <div class="document-tiles">
+                <button class="document-tile" @onclick="() => OnReceipt.InvokeAsync()">
+                    <span class="icon"><Icon Name="receipt" StrokeWidth="1.6" /></span>
+                    <strong>Paragon</strong>
+                    <span>zakupy prywatne</span>
+                </button>
+                @if (Options.CurrentValue.InvoicesEnabled)
+                {
+                    <button class="document-tile" @onclick="() => OnInvoice.InvokeAsync()">
+                        <span class="icon"><Icon Name="building" StrokeWidth="1.6" /></span>
+                        <strong>Faktura</strong>
+                        <span>zakupy dla firmy</span>
+                    </button>
+                }
+            </div>
+            @if (Erp.CurrentValue.Units.CustomerNotice is { } notice)
+            {
+                <p class="sale-notice"><Icon Name="info" /> @notice</p>
+            }
+        </div>
+        <aside class="payment-panel" aria-label="Akceptowane płatności">
+            <h2>Płatności</h2>
+            <div class="payment-row">
+                <span class="logos"><img src="img/visa.svg" alt="Visa" /><img src="img/mastercard.svg" alt="Mastercard" /></span>
+                <span class="text"><strong>Karta płatnicza</strong><small>włóż lub przyłóż kartę</small></span>
+            </div>
+            <div class="payment-row">
+                <span class="logos"><span class="contactless"><Icon Name="contactless" StrokeWidth="2.2" /></span><span class="contactless"><Icon Name="phone" StrokeWidth="2" /></span></span>
+                <span class="text"><strong>Zbliżeniowo</strong><small>telefon, zegarek</small></span>
+            </div>
+            <div class="payment-row">
+                <span class="logos"><img class="blik-logo" src="img/blik.svg" alt="BLIK" /></span>
+                <span class="text"><strong>BLIK</strong><small>kod z aplikacji banku</small></span>
+            </div>
+            <p class="payment-note">Nie przyjmujemy gotówki</p>
+        </aside>
+    </div>
+</div>
+
+@code {
+    [Parameter] public EventCallback OnReceipt { get; set; }
+    [Parameter] public EventCallback OnInvoice { get; set; }
+}

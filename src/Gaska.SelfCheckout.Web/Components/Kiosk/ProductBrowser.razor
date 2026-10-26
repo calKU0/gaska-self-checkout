@@ -1,0 +1,165 @@
+@* Product search: text (name, code, EAN, supplier codes), optionally limited to a category. *@
+@implements IDisposable
+@inject IProductCatalog Catalog
+@inject KioskSession Session
+@inject ILogger<ProductBrowser> Logger
+@inject Microsoft.Extensions.Options.IOptionsMonitor<Gaska.SelfCheckout.Infrastructure.Erp.ErpOptions> Erp
+
+<div class="browser">
+<div class="searchbar">
+    <label class="search-input">
+        <Icon Name="search" />
+        <input @ref="_input" type="text" inputmode="search" enterkeyhint="search" autocomplete="off" spellcheck="false"
+               placeholder="@Placeholder" value="@_text" @oninput="OnInput" aria-label="Szukaj produktu" />
+        @if (!string.IsNullOrEmpty(_text))
+        {
+            <button type="button" class="btn btn-ghost btn-icon btn-sm" @onclick='() => SetText("")' aria-label="Wyczyść"><Icon Name="x" /></button>
+        }
+    </label>
+    <button type="button" class="btn @(_keyboard ? "btn-secondary" : "btn-outline") btn-icon btn-lg" @onclick="() => _keyboard = !_keyboard" aria-label="Klawiatura ekranowa">
+        <Icon Name="keyboard" />
+    </button>
+</div>
+
+<div class="search-meta">
+    <span>
+        @if (_loading)
+        {
+            <text>Szukam…</text>
+        }
+        else if (_page is not null && (_page.TotalCount > 0 || !string.IsNullOrWhiteSpace(_text)))
+        {
+            <text>Znaleziono: <strong>@_page.TotalCount</strong></text>
+        }
+    </span>
+    @if (CategoryId is null && string.IsNullOrWhiteSpace(_text))
+    {
+        <span>Wpisz nazwę, kod, EAN lub kod dostawcy</span>
+    }
+</div>
+
+@if (_items.Count > 0)
+{
+    <ProductGrid Items="_items" Compact="_keyboard" />
+    @if (_page?.HasMore == true)
+    {
+        <div class="load-more">
+            <button class="btn btn-outline btn-lg" @onclick="LoadMore" disabled="@_loading">Pokaż więcej</button>
+        </div>
+    }
+}
+else if (!_loading && (_page is not null) && (!string.IsNullOrWhiteSpace(_text) || CategoryId is not null))
+{
+    <div class="empty-state">
+        <Icon Name="box" />
+        <h3>Brak produktów</h3>
+        <p>Nie znaleźliśmy dostępnych produktów pasujących do „@_text”.<br />Sprawdź pisownię lub poproś obsługę o pomoc.</p>
+        @if (Erp.CurrentValue.Units.CustomerNotice is { } notice)
+        {
+            <p class="sale-notice">@notice</p>
+        }
+    </div>
+}
+else if (CategoryId is null && string.IsNullOrWhiteSpace(_text))
+{
+    <div class="empty-state">
+        <Icon Name="search" />
+        <h3>Czego szukasz?</h3>
+        <p>Możesz też zeskanować kod kreskowy produktu w dowolnym momencie.</p>
+    </div>
+}
+
+@if (_keyboard)
+{
+    @* docked at the bottom of the panel – the results stay visible above it while typing *@
+    <div class="osk-dock">
+        <OnScreenKeyboard Value="@_text" ValueChanged="SetText" />
+    </div>
+}
+</div>
+
+@code {
+    [Parameter] public int? CategoryId { get; set; }
+    [Parameter] public string Placeholder { get; set; } = "Szukaj: nazwa, kod, EAN, kod dostawcy…";
+    [Parameter] public bool ShowKeyboard { get; set; } = true;
+
+    private ElementReference _input;
+    private string _text = "";
+    private bool _keyboard;
+    private bool _loading;
+    private ProductPage? _page;
+    private readonly List<Product> _items = [];
+    private CancellationTokenSource? _debounce;
+    private int? _loadedCategory = -1;
+
+    protected override void OnInitialized() => _keyboard = ShowKeyboard;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedCategory != CategoryId)
+        {
+            _loadedCategory = CategoryId;
+            _text = "";
+            await Search(reset: true);
+        }
+    }
+
+    private Task OnInput(ChangeEventArgs e) => SetText(e.Value?.ToString() ?? "");
+
+    private async Task SetText(string text)
+    {
+        _text = text;
+        Session.Touch();
+        _debounce?.Cancel();
+        _debounce = new CancellationTokenSource();
+        var token = _debounce.Token;
+        try
+        {
+            await Task.Delay(280, token);
+            await Search(reset: true);
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+
+    private async Task LoadMore()
+    {
+        Session.Touch();
+        await Search(reset: false);
+    }
+
+    private async Task Search(bool reset)
+    {
+        if (CategoryId is null && string.IsNullOrWhiteSpace(_text))
+        {
+            _items.Clear();
+            _page = null;
+            StateHasChanged();
+            return;
+        }
+
+        _loading = true;
+        StateHasChanged();
+        try
+        {
+            var pageNo = reset ? 1 : (_page?.Page ?? 0) + 1;
+            var page = await Catalog.SearchAsync(new ProductQuery(_text, CategoryId, pageNo, 24));
+            if (reset) _items.Clear();
+            _items.AddRange(page.Items.Where(p => _items.All(i => i.Id != p.Id)));
+            _page = page;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Błąd wyszukiwania");
+            Session.ShowToast(ToastKind.Error, "Wyszukiwanie niedostępne", "Spróbuj ponownie za chwilę.");
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    public void Dispose() => _debounce?.Cancel();
+}

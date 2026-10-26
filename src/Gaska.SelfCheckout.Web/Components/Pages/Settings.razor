@@ -1,0 +1,489 @@
+@page "/settings"
+@using System.IO.Ports
+@using System.Text.Json
+@using Gaska.SelfCheckout.Application.Options
+@using Gaska.SelfCheckout.Devices.Polcard
+@using Gaska.SelfCheckout.Devices.Posnet
+@using Gaska.SelfCheckout.Infrastructure.Erp
+@using Gaska.SelfCheckout.Infrastructure.Erp.Catalog
+@using Gaska.SelfCheckout.Infrastructure.Settings
+@using Microsoft.Extensions.Options
+@inject IOptionsMonitor<KioskOptions> KioskMonitor
+@inject IOptionsMonitor<CheckoutOptions> CheckoutMonitor
+@inject IOptionsMonitor<PolcardOptions> PolcardMonitor
+@inject IOptionsMonitor<PosnetOptions> PosnetMonitor
+@inject IOptionsMonitor<ErpOptions> ErpMonitor
+@inject StationSettingsStore Store
+@inject CatalogCache Catalog
+@inject XlDictionaries Dictionaries
+@inject ServiceOperations Ops
+@inject ILogger<Settings> Logger
+
+<PageTitle>Konfiguracja stanowiska</PageTitle>
+
+@if (!_authorized)
+{
+    <div class="overlay" style="background: var(--grey-50)">
+        <div class="dialog">
+            <img src="img/gaska-logo.png" alt="GĄSKA" style="height:56px" />
+            <h2>Konfiguracja stanowiska</h2>
+            <p class="muted">Wprowadź PIN administratora</p>
+            <PinPad OnEntered="Login" Error="_pinError" />
+            <a class="btn btn-ghost" href="/service">Anuluj</a>
+        </div>
+    </div>
+    return;
+}
+
+<div class="service">
+    <header class="topbar">
+        <img class="topbar-logo" src="img/gaska-logo.png" alt="GĄSKA" />
+        <div class="topbar-title"><strong>Konfiguracja stanowiska</strong><span>Zmiany działają od razu po zapisaniu</span></div>
+        <div class="topbar-spacer"></div>
+        <a class="btn btn-outline" href="/service"><Icon Name="arrow-left" /> Panel obsługi</a>
+        <a class="btn btn-primary" href="/"><Icon Name="home" /> Kasa</a>
+    </header>
+
+    <div class="service-body">
+        @if (_choicesError is not null)
+        {
+            <div class="card" style="border: 2px solid var(--danger)"><strong>Nie udało się pobrać list z Comarch ERP XL: @_choicesError</strong><span class="muted">Listy zawierają tylko obecne wartości.</span></div>
+        }
+
+        @if (_message is not null)
+        {
+            <div class="card" style="border: 2px solid var(@(_messageOk ? "--success" : "--danger"))"><strong>@_message</strong></div>
+        }
+
+        <div class="card">
+            <h3>Stanowisko</h3>
+            <div class="settings-grid">
+                <div class="field"><label>Identyfikator kasy</label><input @bind="_kiosk.StationId" /><small>drukowany na potwierdzeniach</small></div>
+                <div class="field"><label>PIN panelu obsługi</label><input @bind="_kiosk.ServicePin" inputmode="numeric" maxlength="4" /><small>4 cyfry</small></div>
+                <div class="field"><label>PIN konfiguracji</label><input @bind="_kiosk.AdminPin" type="password" inputmode="numeric" maxlength="4" /><small>4 cyfry</small></div>
+                <div class="field"><label>Powrót do ekranu startowego po (s)</label><input type="number" @bind="_kiosk.IdleTimeoutSeconds" /></div>
+                <div class="field"><label>Ekran podziękowania (s)</label><input type="number" @bind="_kiosk.ThankYouSeconds" /></div>
+                <div class="field"><label>Limit kwoty transakcji (zł)</label><input type="number" @bind="_kiosk.MaxTransactionAmount" /></div>
+                <div class="field"><label>Sprawdzanie połączeń co (s)</label><input type="number" @bind="_kiosk.HealthCheckSeconds" /><small>terminal, drukarka, XL, baza; 0 = wyłączone</small></div>
+                <div class="field"><label>Zatrzymaj kasę po błędach z rzędu</label><input type="number" @bind="_kiosk.HealthFailuresBeforeStop" /><small>ponowne sprawdzenie po 15 s</small></div>
+                <div class="field"><label>Głośność alarmu (0–100)</label><input type="number" min="0" max="100" @bind="_kiosk.AlarmVolume" /><small>wezwanie pomocy, utrata połączenia; 0 = bez dźwięku</small></div>
+                <label class="check"><input type="checkbox" @bind="_kiosk.InvoicesEnabled" /> Faktury dla firm</label>
+                <label class="check"><input type="checkbox" @bind="_checkout.PrintMerchantCopy" /> Drukuj kopię potwierdzenia dla sprzedawcy</label>
+                <label class="check"><input type="checkbox" @bind="_checkout.PrintDeclinedSlip" /> Drukuj potwierdzenie odmowy</label>
+            </div>
+            <div><button class="btn btn-primary" @onclick="SaveStation">Zapisz</button></div>
+        </div>
+
+        <div class="card">
+            <h3>Terminal płatniczy (Polcard / Fiserv)</h3>
+            <div class="settings-grid">
+                <div class="field"><label>Adres IP</label><input @bind="_polcard.Host" /></div>
+                <div class="field"><label>Port</label><input type="number" @bind="_polcard.Port" /></div>
+                <div class="field"><label>Limit ciszy w transakcji (s)</label><input type="number" @bind="_polcard.TransactionIdleTimeoutSeconds" /></div>
+                <div class="field"><label>Czas odpowiedzi (s)</label><input type="number" @bind="_polcard.ResponseTimeoutSeconds" /></div>
+                <div class="field"><label>Kod transakcji sprzedaży</label><input @bind="_polcard.SaleTransactionType" /><small>00 – sprzedaż</small></div>
+            </div>
+            <div class="actions" style="justify-content:flex-start">
+                <button class="btn btn-primary" @onclick="SavePolcard">Zapisz</button>
+                <button class="btn btn-outline" @onclick="TestTerminal" disabled="@_busy">Test połączenia</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>Drukarka fiskalna (POSNET)</h3>
+            <div class="settings-grid">
+                <div class="field">
+                    <label>Port</label>
+                    <select @bind="_posnet.PortName">
+                        @foreach (var port in _ports)
+                        {
+                            <option value="@port">@port</option>
+                        }
+                    </select>
+                </div>
+                <div class="field"><label>Prędkość (baud)</label><input type="number" @bind="_posnet.BaudRate" /></div>
+                <div class="field"><label>Szerokość linii (znaki)</label><input type="number" @bind="_posnet.LineWidth" /><small>0 = odczyt z drukarki</small></div>
+                <div class="field"><label>Wielkość modułu kodu QR</label><input type="number" @bind="_posnet.QrModuleSize" /></div>
+                <div class="field">
+                    <label>Strona kodowa</label>
+                    <select @bind="_posnet.CodePage">
+                        <option value="@PosnetCodePage.Auto">Odczyt z drukarki</option>
+                        <option value="@PosnetCodePage.Mazovia">Mazovia (jak Comarch ERP XL)</option>
+                        <option value="@PosnetCodePage.Windows1250">Windows-1250</option>
+                        <option value="@PosnetCodePage.Latin2">Latin 2</option>
+                    </select>
+                    <small>musi być taka sama jak w drukarce i w XL</small>
+                </div>
+            </div>
+            <div class="actions" style="justify-content:flex-start">
+                <button class="btn btn-primary" @onclick="SavePosnet">Zapisz</button>
+                <button class="btn btn-outline" @onclick="() => Run(Ops.PrintTestAsync)" disabled="@_busy">Wydruk testowy</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>Magazyny i odbiór towaru</h3>
+            <p class="muted">Towar jest sprzedawany najpierw z magazynu głównego (półka), potem z kolejnych w podanej kolejności.
+                Towar z magazynów dodatkowych klient odbiera z biletem odbioru.</p>
+            <div class="warehouse-list">
+                @foreach (var w in _warehouses)
+                {
+                    <div class="warehouse-row">
+                        <select @bind="w.Code">@Options(_choices.Warehouses, w.Code)</select>
+                        <label class="check"><input type="radio" name="primary-warehouse" checked="@w.Primary" @onchange="() => SetPrimary(w)" /> główny (półka)</label>
+                        <button class="btn btn-ghost" disabled="@(_warehouses.Count == 1)" @onclick="() => RemoveWarehouse(w)">Usuń</button>
+                    </div>
+                }
+                <div><button class="btn btn-outline" disabled="@(UnusedWarehouse() is null)" @onclick="AddWarehouse">+ Dodaj magazyn</button></div>
+            </div>
+            <label class="check" style="margin-top:12px"><input type="checkbox" @bind="_showUnavailable" /> Pokazuj towary niedostępne</label>
+            <p class="muted">Wyłączone: wyszukiwarka i kategorie pokazują tylko towary dostępne na powyższych magazynach.
+                Włączone: pokazują wszystkie towary z indeksu wyszukiwarki – niedostępne są wyszarzone z ceną i informacją
+                „Towar chwilowo niedostępny” i nie można ich dodać do koszyka (także skanerem).</p>
+            <div class="actions" style="justify-content:flex-start">
+                <button class="btn btn-primary" @onclick="SaveWarehouses">Zapisz</button>
+                <button class="btn btn-outline" @onclick="() => Run(() => Ops.UploadMapAsync())" disabled="@_busy">Wgraj mapkę do drukarki</button>
+                <label class="btn btn-outline">
+                    Wgraj własną mapkę (PNG/JPG)
+                    <InputFile OnChange="UploadCustomMap" accept=".png,.jpg,.jpeg,.bmp" style="display:none" />
+                </label>
+                <button class="btn btn-outline" @onclick="() => Run(Ops.PrintPickupTestAsync)" disabled="@_busy">Testowy bilet odbioru</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>Towary na wagę i cięte</h3>
+            <p class="muted">Takie towary wymagają sprzedawcy. Gdy są wyłączone, kasa ich nie pokazuje (zeskanowane – informuje klienta),
+                a na ekranie startowym, w pomocy i przy pustym wyniku wyszukiwania klient widzi, że kupi je u sprzedawcy.
+                Comarch ERP XL nie ma słownika rodzajów jednostek – wybierz je z jednostek używanych na kartach towarów.</p>
+            <div class="settings-grid">
+                <label class="check"><input type="checkbox" @bind="_sellWeighed" /> Sprzedawaj towary na wagę</label>
+                <label class="check"><input type="checkbox" @bind="_sellCut" /> Sprzedawaj towary cięte</label>
+                <div class="field">
+                    <label>Jednostki towarów na wagę</label>
+                    <div class="unit-chips">
+                        @foreach (var unit in _weighedUnits)
+                        {
+                            <span class="unit-chip">@unit<button type="button" @onclick="() => _weighedUnits.Remove(unit)" aria-label="Usuń @unit">×</button></span>
+                        }
+                        <select @key="_unitPickers" @onchange="e => AddUnit(_weighedUnits, e.Value as string)">
+                            <option value="">+ dodaj jednostkę…</option>
+                            @foreach (var choice in FreeUnits())
+                            {
+                                <option value="@choice.Value">@choice.Label</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+                <div class="field">
+                    <label>Jednostki towarów ciętych</label>
+                    <div class="unit-chips">
+                        @foreach (var unit in _cutUnits)
+                        {
+                            <span class="unit-chip">@unit<button type="button" @onclick="() => _cutUnits.Remove(unit)" aria-label="Usuń @unit">×</button></span>
+                        }
+                        <select @key="_unitPickers" @onchange="e => AddUnit(_cutUnits, e.Value as string)">
+                            <option value="">+ dodaj jednostkę…</option>
+                            @foreach (var choice in FreeUnits())
+                            {
+                                <option value="@choice.Value">@choice.Label</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div><button class="btn btn-primary" @onclick="SaveUnits">Zapisz</button></div>
+        </div>
+
+        <div class="card">
+            <h3>Dokumenty w Comarch ERP XL</h3>
+            <div class="settings-grid">
+                <div class="field"><label>Seria paragonu</label><select @bind="_xl.ReceiptSeries">@Options(_choices.Series, _xl.ReceiptSeries)</select></div>
+                <div class="field"><label>Seria faktury</label><select @bind="_xl.InvoiceSeries">@Options(_choices.Series, _xl.InvoiceSeries)</select></div>
+                <div class="field">
+                    <label>KSeF przy fakturze</label>
+                    <select @bind="_xl.InvoiceKsefMode"><option value="1">wg konfiguracji XL</option><option value="0">bez KSeF</option></select>
+                </div>
+                <div class="field"><label>Klient paragonu (akronim)</label><input @bind="_xl.CustomerAcronym" /></div>
+                <div class="field"><label>Forma płatności „Karta”</label><select @bind="_xl.CardPaymentForm">@Options(_choices.PaymentForms, _xl.CardPaymentForm)</select></div>
+                <div class="field"><label>Grupa nowych klientów</label><select @bind="_xl.NewCustomerGroupPath">@Options(_choices.CustomerGroups, _xl.NewCustomerGroupPath)</select></div>
+                <div class="field"><label>Cena domyślna nowych klientów</label><select @bind="_xl.NewCustomerPriceNumber">@Options(_choices.PriceTypes, _xl.NewCustomerPriceNumber)</select></div>
+            </div>
+            <div><button class="btn btn-primary" @onclick="SaveXl">Zapisz</button></div>
+        </div>
+
+        <div class="card">
+            <h3>Rejestry firm (nowi klienci)</h3>
+            <div class="settings-grid">
+                <label class="check"><input type="checkbox" @bind="_registry.GusEnabled" /> GUS REGON (BIR 1.1)</label>
+                <div class="field"><label>Adres usługi GUS</label><input @bind="_registry.GusUrl" /></div>
+                <div class="field"><label>Klucz GUS</label><input @bind="_registry.GusKey" /><small>klucz produkcyjny: regon_bir@stat.gov.pl</small></div>
+                <label class="check"><input type="checkbox" @bind="_registry.WhiteListEnabled" /> Biała lista VAT (MF) – zapasowo</label>
+                <div class="field"><label>Adres Białej listy</label><input @bind="_registry.WhiteListUrl" /><small>usługa MF nie wymaga klucza</small></div>
+            </div>
+            <div><button class="btn btn-primary" @onclick="SaveRegistry">Zapisz</button></div>
+        </div>
+
+        @if (_output is not null)
+        {
+            <div class="card"><h3>Wynik</h3><div class="output">@_output</div></div>
+        }
+
+        <FiservCertification />
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery(Name = "k")] public string? AccessToken { get; set; }
+
+    private bool _authorized;
+    private bool _pinError;
+    private bool _busy;
+    private string? _message;
+    private bool _messageOk;
+    private string? _output;
+
+    private KioskOptions _kiosk = new();
+    private CheckoutOptions _checkout = new();
+    private PolcardOptions _polcard = new();
+    private PosnetOptions _posnet = new();
+    private CompanyRegistryOptions _registry = new();
+    private EditableXl _xl = new();
+    private List<WarehouseOptions> _warehouses = [];
+    private bool _showUnavailable;
+    private bool _sellWeighed;
+    private bool _sellCut;
+    private List<string> _weighedUnits = [];
+    private List<string> _cutUnits = [];
+    private int _unitPickers;
+    private XlChoices _choices = new([], [], [], [], [], []);
+    private string? _choicesError;
+    private string[] _ports = [];
+
+    /// <summary>Editable XL document settings (credentials are not edited here).</summary>
+    private sealed class EditableXl
+    {
+        public string ReceiptSeries { get; set; } = "";
+        public string InvoiceSeries { get; set; } = "";
+        public int InvoiceKsefMode { get; set; }
+        public string CustomerAcronym { get; set; } = "";
+        public string CardPaymentForm { get; set; } = "";
+        public string NewCustomerGroupPath { get; set; } = "";
+        public string NewCustomerPriceNumber { get; set; } = "";
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _authorized = ServiceAccess.Consume(AccessToken);
+        Load();
+        try
+        {
+            _choices = await Dictionaries.LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "XL dictionaries could not be loaded");
+            _choicesError = ex.Message;
+        }
+    }
+
+    /// <summary>Options of an XL dictionary; the current value is kept even when XL does not list it.</summary>
+    private static RenderFragment Options(IReadOnlyList<XlChoice> choices, string current) => builder =>
+    {
+        var list = choices.ToList();
+        if (current != "" && list.All(c => c.Value != current))
+            list.Insert(0, new XlChoice(current, $"{current} (brak w XL)"));
+        foreach (var choice in list)
+        {
+            builder.OpenElement(0, "option");
+            builder.AddAttribute(1, "value", choice.Value);
+            builder.AddContent(2, choice.Label);
+            builder.CloseElement();
+        }
+    };
+
+    private void Login(string pin)
+    {
+        if (pin == KioskMonitor.CurrentValue.AdminPin)
+        {
+            _authorized = true;
+            Logger.LogInformation("Workstation configuration opened");
+        }
+        else
+        {
+            _pinError = true;
+            Logger.LogWarning("Invalid workstation configuration PIN");
+        }
+    }
+
+    private void Load()
+    {
+        _kiosk = Clone(KioskMonitor.CurrentValue);
+        _checkout = Clone(CheckoutMonitor.CurrentValue);
+        _polcard = Clone(PolcardMonitor.CurrentValue);
+        _posnet = Clone(PosnetMonitor.CurrentValue);
+        var erp = ErpMonitor.CurrentValue;
+        _registry = Clone(erp.Registry);
+        _warehouses = Clone(erp.Warehouses);
+        _showUnavailable = erp.ShowUnavailableProducts;
+        _sellWeighed = erp.Units.SellWeighed;
+        _sellCut = erp.Units.SellCut;
+        _weighedUnits = erp.Units.Weighed.ToList();
+        _cutUnits = erp.Units.Cut.ToList();
+        var x = erp.XlApi;
+        _xl = new EditableXl
+        {
+            ReceiptSeries = x.ReceiptSeries, InvoiceSeries = x.InvoiceSeries,
+            InvoiceKsefMode = x.InvoiceKsefMode,
+            CustomerAcronym = x.CustomerAcronym, CardPaymentForm = x.CardPaymentForm.ToString(),
+            NewCustomerGroupPath = x.NewCustomerGroupPath, NewCustomerPriceNumber = x.NewCustomerPriceNumber.ToString()
+        };
+        _ports = SerialPort.GetPortNames().Union([_posnet.PortName]).Distinct().OrderBy(p => p).ToArray();
+    }
+
+    private static bool IsPin(string pin) => pin.Length == PinPad.Length && pin.All(char.IsAsciiDigit);
+
+    private static T Clone<T>(T value) => JsonSerializer.Deserialize<T>(JsonSerializer.Serialize(value))!;
+
+    private void Save(Action save, string what)
+    {
+        try
+        {
+            save();
+            _message = $"Zapisano: {what}.";
+            _messageOk = true;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Saving settings failed ({What})", what);
+            _message = "Nie udało się zapisać: " + ex.Message;
+            _messageOk = false;
+        }
+    }
+
+    private void SaveStation() => Save(() =>
+    {
+        // PINs are entered on a numeric keypad – letters would lock the panel out
+        if (!IsPin(_kiosk.ServicePin) || !IsPin(_kiosk.AdminPin))
+            throw new InvalidOperationException($"PIN musi mieć dokładnie {PinPad.Length} cyfry");
+        Store.Save(KioskOptions.Section, _kiosk, nameof(KioskOptions.StationId), nameof(KioskOptions.ServicePin), nameof(KioskOptions.AdminPin),
+            nameof(KioskOptions.IdleTimeoutSeconds), nameof(KioskOptions.ThankYouSeconds), nameof(KioskOptions.MaxTransactionAmount),
+            nameof(KioskOptions.InvoicesEnabled), nameof(KioskOptions.HealthCheckSeconds), nameof(KioskOptions.HealthFailuresBeforeStop), nameof(KioskOptions.AlarmVolume));
+        Store.Save(CheckoutOptions.Section, _checkout, nameof(CheckoutOptions.PrintMerchantCopy), nameof(CheckoutOptions.PrintDeclinedSlip));
+    }, "stanowisko");
+
+    // only the fields shown on a card are stored – the others keep coming from appsettings.json
+    private void SavePolcard() => Save(() => Store.Save(PolcardOptions.Section, _polcard, nameof(PolcardOptions.Host), nameof(PolcardOptions.Port),
+        nameof(PolcardOptions.TransactionIdleTimeoutSeconds), nameof(PolcardOptions.ResponseTimeoutSeconds), nameof(PolcardOptions.SaleTransactionType)),
+        "terminal płatniczy");
+
+    private void SavePosnet() => Save(() => Store.Save(PosnetOptions.Section, _posnet, nameof(PosnetOptions.PortName), nameof(PosnetOptions.BaudRate),
+        nameof(PosnetOptions.LineWidth), nameof(PosnetOptions.QrModuleSize), nameof(PosnetOptions.CodePage)), "drukarka fiskalna");
+
+    private void SaveRegistry() => Save(() => Store.Save("Erp:Registry", _registry, nameof(CompanyRegistryOptions.GusEnabled),
+        nameof(CompanyRegistryOptions.GusUrl), nameof(CompanyRegistryOptions.GusKey), nameof(CompanyRegistryOptions.WhiteListEnabled),
+        nameof(CompanyRegistryOptions.WhiteListUrl)), "rejestry firm");
+
+    private void SaveXl() => Save(() =>
+    {
+        Store.Save("Erp:XlApi:ReceiptSeries", _xl.ReceiptSeries);
+        Store.Save("Erp:XlApi:InvoiceSeries", _xl.InvoiceSeries);
+        Store.Save("Erp:XlApi:InvoiceKsefMode", _xl.InvoiceKsefMode);
+        Store.Save("Erp:XlApi:CustomerAcronym", _xl.CustomerAcronym);
+        Store.Save("Erp:XlApi:CardPaymentForm", int.Parse(_xl.CardPaymentForm));
+        Store.Save("Erp:XlApi:NewCustomerGroupPath", _xl.NewCustomerGroupPath);
+        Store.Save("Erp:XlApi:NewCustomerPriceNumber", int.Parse(_xl.NewCustomerPriceNumber));
+    }, "dokumenty XL");
+
+    private void SaveWarehouses()
+    {
+        Save(() =>
+        {
+            if (_warehouses.Any(w => string.IsNullOrWhiteSpace(w.Code)))
+                throw new InvalidOperationException("wybierz magazyn w każdym wierszu");
+            if (_warehouses.DistinctBy(w => w.Code).Count() != _warehouses.Count)
+                throw new InvalidOperationException("magazyny nie mogą się powtarzać");
+            if (_warehouses.Count(w => w.Primary) != 1)
+                throw new InvalidOperationException("wskaż jeden magazyn główny");
+            Store.Save("Erp:Warehouses", _warehouses.Select(w => new WarehouseOptions { Code = w.Code, Primary = w.Primary }).ToList());
+            Store.Save("Erp:ShowUnavailableProducts", _showUnavailable);
+        }, "magazyny");
+        RefreshCatalogSoon();
+    }
+
+    private void SaveUnits()
+    {
+        Save(() =>
+        {
+            if (_weighedUnits.Count == 0 || _cutUnits.Count == 0)
+                throw new InvalidOperationException("każda lista jednostek musi mieć co najmniej jedną jednostkę");
+            Store.Save("Erp:Units", new SaleUnitsOptions
+            {
+                SellWeighed = _sellWeighed, SellCut = _sellCut, WeighedUnits = _weighedUnits, CutUnits = _cutUnits
+            }, nameof(SaleUnitsOptions.SellWeighed), nameof(SaleUnitsOptions.SellCut), nameof(SaleUnitsOptions.WeighedUnits), nameof(SaleUnitsOptions.CutUnits));
+        }, "towary na wagę i cięte");
+        RefreshCatalogSoon();
+    }
+
+    /// <summary>Units of the product cards not assigned to either list (a unit is either weighed or cut).</summary>
+    private IEnumerable<XlChoice> FreeUnits() =>
+        _choices.Units.Where(c => !_weighedUnits.Concat(_cutUnits).Contains(c.Value, StringComparer.OrdinalIgnoreCase));
+
+    private void AddUnit(List<string> units, string? unit)
+    {
+        if (!string.IsNullOrWhiteSpace(unit) && !units.Contains(unit, StringComparer.OrdinalIgnoreCase))
+            units.Add(unit.Trim());
+        _unitPickers++; // new select elements – back to "+ dodaj jednostkę…"
+    }
+
+    /// <summary>The catalog is reloaded with the new settings (after the configuration reload).</summary>
+    private void RefreshCatalogSoon() => _ = Task.Run(async () =>
+    {
+        await Task.Delay(1500);
+        await Catalog.RefreshAsync();
+    });
+
+    private void SetPrimary(WarehouseOptions primary) => _warehouses.ForEach(w => w.Primary = w == primary);
+
+    /// <summary>First XL warehouse not on the list yet (null when XL lists are unavailable or all are used).</summary>
+    private string? UnusedWarehouse() => _choices.Warehouses.Select(c => c.Value).FirstOrDefault(c => _warehouses.All(w => w.Code != c));
+
+    private void AddWarehouse()
+    {
+        if (UnusedWarehouse() is { } code)
+            _warehouses.Add(new WarehouseOptions { Code = code });
+    }
+
+    private void RemoveWarehouse(WarehouseOptions warehouse)
+    {
+        _warehouses.Remove(warehouse);
+        if (!_warehouses.Any(w => w.Primary))
+            _warehouses[0].Primary = true;
+    }
+
+    private async Task TestTerminal() => await Run(Ops.TestTerminalAsync);
+
+    private async Task UploadCustomMap(InputFileChangeEventArgs e)
+    {
+        await using var stream = e.File.OpenReadStream(10 * 1024 * 1024);
+        var memory = new MemoryStream();
+        await stream.CopyToAsync(memory);
+        memory.Position = 0;
+        await Run(() => Ops.UploadMapAsync(memory));
+    }
+
+    private async Task Run(Func<Task<string>> action)
+    {
+        _busy = true;
+        _output = "…";
+        StateHasChanged();
+        try
+        {
+            _output = await action();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

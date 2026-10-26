@@ -1,0 +1,222 @@
+@* Fiserv certification tests (sheet "Arkusz_cert_ECR" – POS_SMART): terminal operations for the sheet's amounts,
+   without an ERP document, each with its own ECR↔POS log. *@
+@implements IDisposable
+@inject TerminalTestRunner Runner
+@inject CertificationLogSink Log
+
+@* collapsed by default – opened only for the certification *@
+<details class="card cert">
+    <summary><h3>Testy certyfikacyjne Fiserv</h3><span class="muted">rozwiń</span></summary>
+    <p class="muted">Operacje na terminalu bez dokumentu w XL. Każde pytanie terminala (BLIK, DCC, „inny kod lub karta?”) trafia tutaj.
+        Log ECR↔POS każdego testu: <code>@Log.Directory</code> → plik <code>test_NN_rrrrMMdd.log</code>.</p>
+
+    @if (_status.IsRunning)
+    {
+        <div class="cert-running">
+            <div class="spinner"></div>
+            <div>
+                <strong>Test @_status.TestNumber – @Label(_status.Operation)</strong>
+                <div class="terminal-message">@(_status.TerminalMessage ?? "Postępuj zgodnie z instrukcjami na terminalu")</div>
+            </div>
+        </div>
+
+        @if (_status.Prompt is { } prompt)
+        {
+            <div class="cert-prompt">
+                <p class="lead"><strong>@prompt.Text</strong></p>
+                @if (prompt.Kind == TerminalPromptKind.Numeric)
+                {
+                    <input class="cert-input" inputmode="numeric" @bind="_numeric" @bind:event="oninput" placeholder="wpisz wartość" />
+                    <div class="actions">
+                        <button class="btn btn-outline btn-lg" @onclick="() => Answer(TerminalReply.Cancel)">Anuluj</button>
+                        <button class="btn btn-primary btn-lg" disabled="@string.IsNullOrEmpty(_numeric)" @onclick="() => Answer(TerminalReply.Of(_numeric))">Zatwierdź</button>
+                    </div>
+                }
+                else
+                {
+                    <div class="actions">
+                        @foreach (var option in prompt.Options)
+                        {
+                            <button class="btn btn-primary btn-lg" @onclick="() => Answer(TerminalReply.Of(option.Value))">@option.Label</button>
+                        }
+                        @if (prompt.Kind == TerminalPromptKind.Choice)
+                        {
+                            <button class="btn btn-ghost btn-lg" @onclick="() => Answer(TerminalReply.Cancel)">Anuluj</button>
+                        }
+                    </div>
+                }
+            </div>
+        }
+
+        <button class="btn btn-secondary" @onclick="Runner.Cancel"><Icon Name="x" /> Przerwij transakcję (ECR)</button>
+    }
+
+    <div class="table-wrap">
+        <table class="journal cert-table">
+            <thead><tr><th>Nr</th><th>Przypadek</th><th>Karta / sposób</th><th>Kwota</th><th></th></tr></thead>
+            <tbody>
+                @foreach (var t in Tests)
+                {
+                    <tr @key="t.Key" class="@(_lastKey == t.Key ? "cert-last" : null)">
+                        <td class="nowrap"><strong>@t.Number</strong></td>
+                        <td>@t.Title</td>
+                        <td>@t.Card</td>
+                        <td class="nowrap tabular">@(t.Amount is { } a ? Fmt.Money(a) : "–")</td>
+                        <td class="nowrap">
+                            <button class="btn btn-outline btn-sm" disabled="@_status.IsRunning" @onclick="() => Run(t)">@Label(t.Operation)</button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    @if (Runner.LastApproved is { } last)
+    {
+        <p class="muted">Ostatnia zaakceptowana sprzedaż testowa (do unieważnienia): @Fmt.Money(last.Amount), rachunek @last.ReceiptNumber.</p>
+    }
+
+    @if (!_status.IsRunning && _status.Result is { } result)
+    {
+        <h3>Wynik – test @_status.TestNumber (@Label(_status.Operation))</h3>
+        <p class="muted">Log: <code>@_status.LogFile</code></p>
+        <div class="output">@result</div>
+    }
+
+    <h3>Do arkusza certyfikacyjnego</h3>
+    @if (Runner.Results is { Count: > 0 } results)
+    {
+        <p class="muted">Każde uruchomienie testu. W arkuszu (zakładka POS_SMART) wpisz dla testu: kolumna J – log, L – rachunek kopii
+            sprzedawcy, M – rachunek kopii klienta (z udanej próby; przy kilku krokach testu – wszystkie, po przecinku).</p>
+        <div class="table-wrap">
+            <table class="journal">
+                <thead><tr><th>Nr</th><th>Operacja</th><th>Czas</th><th>Wynik</th><th>J – log</th><th>L – sprzedawca</th><th>M – klient</th></tr></thead>
+                <tbody>
+                    @foreach (var r in results)
+                    {
+                        <tr>
+                            <td class="nowrap"><strong>@r.Test</strong></td>
+                            <td class="nowrap">@Label(r.Operation)</td>
+                            <td class="nowrap">@r.At.ToString("dd.MM HH:mm:ss")</td>
+                            <td>@r.Outcome</td>
+                            <td class="nowrap"><code>@r.LogFile</code></td>
+                            <td class="nowrap">@r.MerchantReceipt</td>
+                            <td class="nowrap">@r.CardholderReceipt</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+    else
+    {
+        <p class="muted">Brak wykonanych testów.</p>
+    }
+
+    @if (_confirmClear)
+    {
+        <div class="cert-prompt">
+            <p><strong>Usunąć zestawienie i wszystkie pliki logów testów (<code>logs/polcard/cert/test_*.log</code>)?</strong> Tej operacji nie można cofnąć.</p>
+            <div class="actions">
+                <button class="btn btn-outline btn-sm" @onclick="() => _confirmClear = false">Anuluj</button>
+                <button class="btn btn-danger btn-sm" @onclick="Clear"><Icon Name="trash" /> Tak, usuń</button>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="actions" style="justify-content:flex-start">
+            <button class="btn btn-ghost btn-sm" disabled="@_status.IsRunning" @onclick="() => _confirmClear = true"><Icon Name="trash" /> Wyczyść zestawienie i logi</button>
+            @if (_cleared is { } info)
+            {
+                <span class="muted">@info</span>
+            }
+        </div>
+    }
+</details>
+
+@code {
+    private sealed record CertTest(string Key, string Number, string Title, string Card, TerminalTestOperation Operation, decimal? Amount);
+
+    // the cases left visible by the sheet's filter (POS_SMART, CAT, interface 3)
+    private static readonly CertTest[] Tests =
+    [
+        new("3", "3", "ECR_HELLO_EXTENDED – otwarcie sesji", "–", TerminalTestOperation.Hello, null),
+        new("4", "4", "Brak komunikacji – odłącz kabel LAN od terminala przed uruchomieniem", "Polcard TEST OK", TerminalTestOperation.Sale, 13.33m),
+        new("5", "5", "Kwota poniżej 1 zł", "prywatna zbliżeniowa", TerminalTestOperation.Sale, 0.01m),
+        new("6", "6", "Zbliżeniowo", "prywatna zbliżeniowa", TerminalTestOperation.Sale, 1.00m),
+        new("7", "7", "Telefon z PIN-em w aplikacji (CDCVM)", "telefon (Google Pay)", TerminalTestOperation.Sale, 1.00m),
+        new("8", "8", "Pasek magnetyczny + PIN", "Polcard TEST BIS OK", TerminalTestOperation.Sale, 1.00m),
+        new("10", "10", "Odmowa", "Polcard TEST DECLINE", TerminalTestOperation.Sale, 150.51m),
+        new("11", "11", "Pasek + podpis", "Polcard TEST OK", TerminalTestOperation.Sale, 17.74m),
+        new("12", "12", "Timeout – nie przykładaj karty", "–", TerminalTestOperation.Sale, 19.99m),
+        new("13", "13", "3 próby: DECLINE → MAESTRO DECLINE (DCC) → TEST OK – uruchom 3 razy", "3 karty", TerminalTestOperation.Sale, 15.00m),
+        new("14", "14", "Chip + PIN", "prywatna z chipem", TerminalTestOperation.Sale, 1.00m),
+        new("16", "16", "Kwota za wysoka", "Polcard TEST OK", TerminalTestOperation.Sale, 20000.02m),
+        new("17", "17", "Najpierw zły PIN, potem dobry", "Polcard TEST BIS OK", TerminalTestOperation.Sale, 21.21m),
+        new("19a", "19", "Unieważnienie – krok 1: sprzedaż", "Polcard TEST OK", TerminalTestOperation.Sale, 15.11m),
+        new("19b", "19", "Unieważnienie – krok 2: unieważnij ostatnią", "–", TerminalTestOperation.ReverseLast, 15.11m),
+        new("20", "20", "Uznanie (zwrot)", "Polcard TEST OK", TerminalTestOperation.Refund, 25.99m),
+        new("21", "21", "Status ostatniej transakcji + wydruk", "–", TerminalTestOperation.LastTransaction, null),
+        new("22A", "22", "BLIK bez kodu → „inny kod lub karta?” TAK → karta", "Polcard TEST OK", TerminalTestOperation.Sale, 1.10m),
+        new("22B", "22", "BLIK bez kodu → „inny kod lub karta?” NIE", "–", TerminalTestOperation.Sale, 1.10m),
+        new("23", "23", "BLIK – poprawny kod", "własny BLIK", TerminalTestOperation.Sale, 1.10m),
+        new("24", "24", "BLIK – błędny kod (np. 123456)", "błędny BLIK", TerminalTestOperation.Sale, 4.99m),
+        new("25", "25", "DCC – sprzedaż w walucie karty", "Polcard TEST MAESTRO OK", TerminalTestOperation.Sale, 10.00m),
+        new("26", "26", "DCC – uznanie (zwrot)", "Polcard TEST MAESTRO OK", TerminalTestOperation.Refund, 7.77m),
+        new("56", "56", "Status wysyłki do rozliczenia (ECR_PROMPT 04)", "–", TerminalTestOperation.UploadStatus, null),
+        new("57a", "57", "Raport informacyjny (bez wysyłki)", "–", TerminalTestOperation.Report, null),
+        new("57b", "57", "Raport informacyjny z zerowaniem liczników", "–", TerminalTestOperation.ReportWithReset, null),
+        new("58", "58", "Zamknięcie dnia (wysyłka do rozliczenia)", "–", TerminalTestOperation.CloseDay, null)
+    ];
+
+    private TerminalTestStatus _status = TerminalTestStatus.Idle;
+    private string? _lastKey;
+    private string _numeric = "";
+    private bool _confirmClear;
+    private string? _cleared;
+
+    private void Clear()
+    {
+        _confirmClear = false;
+        _cleared = $"Usunięto zestawienie i {Runner.ClearResults()} plików logów.";
+    }
+
+    protected override void OnInitialized()
+    {
+        _status = Runner.Status;
+        Runner.Changed += OnChanged;
+    }
+
+    private void OnChanged() => InvokeAsync(() =>
+    {
+        _status = Runner.Status;
+        if (_status.Prompt is null)
+            _numeric = "";
+        StateHasChanged();
+    });
+
+    private void Run(CertTest test)
+    {
+        _lastKey = test.Key;
+        Runner.TryStart(test.Number, test.Operation, test.Amount ?? 0m);
+    }
+
+    private void Answer(TerminalReply reply) => Runner.Answer(reply);
+
+    private static string Label(TerminalTestOperation? op) => op switch
+    {
+        TerminalTestOperation.Hello => "Hello",
+        TerminalTestOperation.Sale => "Sprzedaż",
+        TerminalTestOperation.Refund => "Uznanie",
+        TerminalTestOperation.ReverseLast => "Unieważnij ostatnią",
+        TerminalTestOperation.LastTransaction => "Ostatnia transakcja",
+        TerminalTestOperation.UploadStatus => "Status wysyłki",
+        TerminalTestOperation.Report => "Raport",
+        TerminalTestOperation.ReportWithReset => "Raport z zerowaniem",
+        TerminalTestOperation.CloseDay => "Zamknięcie dnia",
+        _ => ""
+    };
+
+    public void Dispose() => Runner.Changed -= OnChanged;
+}

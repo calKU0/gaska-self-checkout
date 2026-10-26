@@ -1,0 +1,109 @@
+@* Customer cart with the total and the pay button. *@
+@inherits SessionComponent
+
+<aside class="panel cart-panel @(Open ? "open" : null)" aria-label="Koszyk">
+    <div class="cart-header">
+        <h2>Koszyk</h2>
+        <div style="display:flex; gap:8px; align-items:center">
+            <span class="doc-badge">@(Session.IsInvoice ? "Faktura" : "Paragon")</span>
+            @if (!Session.Cart.IsEmpty)
+            {
+                <span class="badge">@Fmt.Number(Session.Cart.ItemCount) szt.</span>
+            }
+            @if (Open)
+            {
+                <button class="btn btn-ghost btn-icon btn-sm" @onclick="OnClose" aria-label="Zamknij koszyk"><Icon Name="x" /></button>
+            }
+        </div>
+    </div>
+
+    @if (Session.Cart.IsEmpty)
+    {
+        <div class="cart-empty">
+            <div>
+                <Icon Name="cart" StrokeWidth="1.5" />
+                <h3 style="margin-top:12px">Koszyk jest pusty</h3>
+                <p>Zeskanuj kod kreskowy produktu<br />lub wyszukaj go na ekranie.</p>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="cart-lines">
+            @foreach (var line in Session.Cart.Lines)
+            {
+                var pending = line.Quote is null;
+                var nextTier = Session.QuantityBreaks(line.Product.Id).FirstOrDefault(t => t.Quantity > line.Quantity);
+                var pickup = line.Allocations.Where(a => !a.IsPrimary).Sum(a => a.Quantity);
+                <div class="cart-line @(line.Product.Id == Session.LastAddedProductId ? "flash" : null)" @key="line.Product.Id">
+                    <div>
+                        <div class="title">@line.Product.Name</div>
+                        <div class="code">@line.Product.Code</div>
+                        @if (pickup > 0)
+                        {
+                            <div class="secondary-stock"><Icon Name="map" Class="inline-icon" /> @Fmt.Number(pickup) @line.Product.Unit do odbioru z magazynu</div>
+                        }
+                        @if (nextTier is not null && !pending && nextTier.Quote.Price < line.UnitPrice && nextTier.Quantity <= line.Product.AvailableQuantity)
+                        {
+                            <div class="tier-hint">Od @Fmt.Number(nextTier.Quantity) @line.Product.Unit taniej: @Fmt.Money(nextTier.Quote.Price) / @line.Product.Unit</div>
+                        }
+                    </div>
+                    <div class="line-total tabular @(!pending && line.Discount > 0 ? "discounted" : null)">
+                        @if (pending)
+                        {
+                            <span class="price-pending"></span>
+                        }
+                        else
+                        {
+                            @Fmt.Money(line.Total)
+                            @if (line.Discount > 0)
+                            {
+                                <span class="list-price">@Fmt.Money(line.ListTotal)</span>
+                            }
+                        }
+                    </div>
+                    <div class="controls">
+                        <div class="stepper">
+                            <button @onclick="() => Session.SetQuantity(line.Product.Id, line.Quantity - 1)" aria-label="Zmniejsz ilość"><Icon Name="minus" /></button>
+                            <span>@Fmt.Number(line.Quantity)</span>
+                            <button @onclick="() => Session.SetQuantity(line.Product.Id, line.Quantity + 1)" disabled="@(line.Quantity >= line.Product.AvailableQuantity)" aria-label="Zwiększ ilość"><Icon Name="plus" /></button>
+                        </div>
+                        <span class="unit-price">
+                            @(pending ? "liczymy cenę…" : $"{Fmt.Money(line.UnitPrice)} / {line.Product.Unit}")
+                            @if (!pending && line.DiscountPercent > 0)
+                            {
+                                <span class="discount-badge">rabat −@line.DiscountPercent%</span>
+                            }
+                        </span>
+                        <button class="remove-btn" @onclick="() => Session.Remove(line.Product.Id)" aria-label="Usuń z koszyka"><Icon Name="trash" /></button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    <div class="cart-footer">
+        @if (!Session.PricesPending && Session.Cart.Discount > 0)
+        {
+            <div class="cart-discount">
+                <span>Rabat</span>
+                <span class="tabular">−@Fmt.Money(Session.Cart.Discount)</span>
+            </div>
+        }
+        <div class="cart-total">
+            <span class="label">Do zapłaty</span>
+            <span class="amount">@(Session.PricesPending ? "…" : Fmt.Money(Session.Cart.Total))</span>
+        </div>
+        <button class="btn btn-primary btn-xl btn-block" disabled="@(Session.Cart.IsEmpty || Session.PricesPending)" @onclick="OnPay">
+            <Icon Name="card" /> @(Session.PricesPending ? "Liczymy ceny…" : "Zapłać")
+        </button>
+        <button class="btn btn-ghost btn-block btn-sm" @onclick="OnCancelShopping">Anuluj zakupy</button>
+    </div>
+</aside>
+
+@code {
+    [Parameter] public bool Open { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnPay { get; set; }
+    [Parameter] public EventCallback OnCancelShopping { get; set; }
+}

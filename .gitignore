@@ -1,0 +1,18 @@
+bin/
+obj/
+.vs/
+*.user
+logs/
+data/
+publish/
+# dane dostępowe środowiska – nie commitować
+appsettings.Local.json
+
+# client documentation, protocol specifications and certification evidence – not published
+docs/
+
+# Comarch ERP XL API wrapper – licensed library, copied from the XL installation
+lib/cdn_api*.dll
+
+# local tooling (Claude Code)
+.claude/

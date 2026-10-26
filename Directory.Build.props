@@ -1,0 +1,16 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <Company>GASKA</Company>
+    <Product>GASKA Self-Checkout</Product>
+    <Version>1.0.0</Version>
+    <!-- XL API (cdn_api.dll) is 32-bit – the whole host process must run as x86 -->
+    <PlatformTarget>x86</PlatformTarget>
+    <!-- Windows-only application (XL API, serial ports, System.Drawing) – no platform compatibility warnings -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+</Project>

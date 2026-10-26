@@ -1,0 +1,19 @@
+@inherits SessionComponent
+
+<div class="toasts" aria-live="polite">
+    @foreach (var t in Session.Toasts)
+    {
+        <div class="toast @t.Kind.ToString().ToLowerInvariant()" @key="t.Id" @onclick="() => Session.ExpireToasts()">
+            <span class="ico">
+                <Icon Name="@(t.Kind switch { ToastKind.Success => "check", ToastKind.Warning => "alert", ToastKind.Error => "x", _ => "info" })" />
+            </span>
+            <div>
+                <strong>@t.Title</strong>
+                @if (!string.IsNullOrEmpty(t.Text))
+                {
+                    <span>@t.Text</span>
+                }
+            </div>
+        </div>
+    }
+</div>
