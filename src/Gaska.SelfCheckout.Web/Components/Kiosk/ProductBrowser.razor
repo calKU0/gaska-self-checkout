@@ -9,7 +9,8 @@
 <div class="searchbar">
     <label class="search-input">
         <Icon Name="search" />
-        <input @ref="_input" type="text" inputmode="search" enterkeyhint="search" autocomplete="off" spellcheck="false"
+        @* inputmode="none": the kiosk has its own on-screen keyboard – the Windows touch keyboard must not pop up *@
+        <input @ref="_input" type="text" inputmode="none" enterkeyhint="search" autocomplete="off" spellcheck="false"
                placeholder="@Placeholder" value="@_text" @oninput="OnInput" aria-label="Szukaj produktu" />
         @if (!string.IsNullOrEmpty(_text))
         {
