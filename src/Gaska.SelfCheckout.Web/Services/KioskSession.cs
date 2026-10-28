@@ -71,6 +71,9 @@ public sealed class KioskSession : IDisposable
     public PricingContext Pricing => PricingContext.For(Customer, DocumentKind ?? SaleDocumentKind.Receipt);
     public int? LastAddedProductId { get; private set; }
 
+    /// <summary>Incremented on every addition to the cart – the cart scrolls to the added line.</summary>
+    public int AddSequence { get; private set; }
+
     /// <summary>Product just added by scanning – its photo replaces the scan illustration for a moment.</summary>
     public Product? ScannedProduct { get; private set; }
     private DateTime _scannedUntil;
@@ -225,6 +228,7 @@ public sealed class KioskSession : IDisposable
             case CartChangeResult.Added:
             case CartChangeResult.Increased:
                 LastAddedProductId = product.Id;
+                AddSequence++;
                 _ = PriceCartAsync();
                 LogAdded(product, scanned, result);
                 RequestBreaks(product.Id);
@@ -232,6 +236,7 @@ public sealed class KioskSession : IDisposable
                 return true;
             case CartChangeResult.LimitedByStock:
                 LastAddedProductId = product.Id;
+                AddSequence++;
                 _ = PriceCartAsync();
                 LogAdded(product, scanned, result);
                 ShowToast(ToastKind.Warning, "Brak większej ilości",

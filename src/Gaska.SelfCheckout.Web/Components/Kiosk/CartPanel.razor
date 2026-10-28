@@ -1,5 +1,6 @@
 @* Customer cart with the total and the pay button. *@
 @inherits SessionComponent
+@inject IJSRuntime JS
 
 <aside class="panel cart-panel @(Open ? "open" : null)" aria-label="Koszyk">
     <div class="cart-header">
@@ -35,7 +36,7 @@
                 var pending = line.Quote is null;
                 var nextTier = Session.QuantityBreaks(line.Product.Id).FirstOrDefault(t => t.Quantity > line.Quantity);
                 var pickup = line.Allocations.Where(a => !a.IsPrimary).Sum(a => a.Quantity);
-                <div class="cart-line @(line.Product.Id == Session.LastAddedProductId ? "flash" : null)" @key="line.Product.Id">
+                <div class="cart-line @(line.Product.Id == Session.LastAddedProductId ? "flash" : null)" @key="line.Product.Id" data-product="@line.Product.Id">
                     <div>
                         <div class="title">@line.Product.Name</div>
                         <div class="code">@line.Product.Code</div>
@@ -83,11 +84,12 @@
     }
 
     <div class="cart-footer">
-        @if (!Session.PricesPending && Session.Cart.Discount > 0)
+        @* stays while prices are recalculated – the footer does not change its height on every scan *@
+        @if (Session.Cart.Discount > 0)
         {
             <div class="cart-discount">
                 <span>Rabat</span>
-                <span class="tabular">−@Fmt.Money(Session.Cart.Discount)</span>
+                <span class="tabular">@(Session.PricesPending ? "…" : "−" + Fmt.Money(Session.Cart.Discount))</span>
             </div>
         }
         <div class="cart-total">
@@ -106,4 +108,23 @@
     [Parameter] public EventCallback OnClose { get; set; }
     [Parameter] public EventCallback OnPay { get; set; }
     [Parameter] public EventCallback OnCancelShopping { get; set; }
+
+    private IJSObjectReference? _module;
+    private int _scrolledSequence;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // a product was added – show its line (rendered by now)
+        if (Session.AddSequence == _scrolledSequence || Session.LastAddedProductId is not { } productId)
+            return;
+        _scrolledSequence = Session.AddSequence;
+        try
+        {
+            _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/kiosk.js");
+            await _module.InvokeVoidAsync("scrollCartTo", productId);
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+    }
 }

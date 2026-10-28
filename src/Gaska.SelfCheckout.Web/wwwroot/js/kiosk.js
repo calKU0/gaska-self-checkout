@@ -80,3 +80,17 @@ function reset(now) {
 
 export function focus(el) { if (el) el.focus(); }
 export function scrollTop(el) { if (el) el.scrollTop = 0; }
+
+// Scrolls the cart list (only the list, never the page) so the line of the product is visible: a new line at the
+// bottom, an existing one wherever it is.
+export function scrollCartTo(productId) {
+    const list = document.querySelector(".cart-lines");
+    const line = list && list.querySelector(`[data-product="${productId}"]`);
+    if (!line) return;
+    const l = list.getBoundingClientRect();
+    const r = line.getBoundingClientRect();
+    if (r.top < l.top)
+        list.scrollBy({ top: r.top - l.top, behavior: "smooth" });
+    else if (r.bottom > l.bottom)
+        list.scrollBy({ top: Math.min(r.bottom - l.bottom, r.top - l.top), behavior: "smooth" });
+}

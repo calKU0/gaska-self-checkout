@@ -189,7 +189,7 @@ input { font: inherit; }
 }
 @keyframes scanline { 0%, 100% { top: 26%; } 50% { top: 72%; } }
 /* photo of the product just scanned (placeholder icon underneath when it has no photo) */
-.scan-illustration.scanned { background: var(--white); border: 4px solid var(--success); animation: pop .25s ease; }
+.scan-illustration.scanned { background: var(--white); border: 4px solid var(--success); animation: fadein .2s ease; }
 .scan-illustration.scanned::after { content: none; }
 .scan-illustration.scanned > svg { width: 40%; height: 40%; color: var(--grey-200); }
 .scan-illustration.scanned img { position: absolute; inset: 14%; width: 72%; height: 72%; object-fit: contain; }
@@ -198,8 +198,12 @@ input { font: inherit; }
     background: var(--success); color: var(--white); display: grid; place-items: center;
 }
 .scanned-check svg { width: 60%; height: 60%; }
-.scan-hero h1 { color: var(--grey-900); }
-.scan-hero p { font-size: 1.15rem; color: var(--text-muted); }
+/* the same height in both states (scan prompt / scanned product), so nothing moves on a scan */
+.scan-hero h1 { color: var(--grey-900); line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.scan-hero p {
+    font-size: 1.15rem; color: var(--text-muted); line-height: 1.4; height: 2.8em; margin: 0;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
 .scan-hero-actions { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 8px; }
 
 /* ---------- Search ---------- */
