@@ -220,8 +220,17 @@ public sealed class XlCustomerPricing(XlSession xl, CatalogCache catalog, ILogge
             OKRESTRANSAKCJIDO int, PROGTPR int, PRM_WarunekProgSQL varchar(2000), LIMITRODZAJ tinyint, LIMITWARTOSCKNT tinyint,
             CZYLIMITKNT tinyint);
         DECLARE @date int = DATEDIFF(ss, '1990-01-01T00:00:00', GETDATE());
-        -- company unit of the kiosk operator: promotions can be limited to it (Struktura firmy → promocje centrum)
-        DECLARE @frsId varchar(20) = ISNULL((SELECT TOP 1 CAST(Ope_FrsID AS varchar(20)) FROM cdn.OpeKarty WHERE Ope_Ident = @operator), '1');
+        -- company unit of the kiosk operator and all units above it, comma separated (as XL passes them): promotions
+        -- assigned to a parent unit (e.g. the whole company) apply in its sub-units too (Struktura firmy → promocje centrum)
+        DECLARE @frsId varchar(255);
+        WITH path AS (
+            SELECT f.FRS_ID, f.FRS_GrONumer, 0 AS depth FROM cdn.FrmStruktura f
+            WHERE f.FRS_ID = ISNULL((SELECT TOP 1 Ope_FrsID FROM cdn.OpeKarty WHERE Ope_Ident = @operator), 1)
+            UNION ALL
+            SELECT f.FRS_ID, f.FRS_GrONumer, p.depth + 1 FROM cdn.FrmStruktura f JOIN path p ON f.FRS_ID = p.FRS_GrONumer
+            WHERE p.FRS_GrONumer <> 0 AND p.depth < 50)
+        SELECT @frsId = STRING_AGG(CAST(FRS_ID AS varchar(20)), ',') WITHIN GROUP (ORDER BY depth) FROM path;
+        SET @frsId = ISNULL(@frsId, '1');
 
         INSERT INTO @promocjeProgi
         EXEC CDN.MacierzRabatowa @lNagPoz = 2, @lRodzajDok = 1, @lData = @date, @lKntTyp = 32, @lKntNumer = @kntID,
