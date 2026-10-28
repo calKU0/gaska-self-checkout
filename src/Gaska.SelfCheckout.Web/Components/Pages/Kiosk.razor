@@ -116,7 +116,7 @@
 
     <div class="cart-bar">
         <div class="sum">
-            <strong>@(Session.PricesPending ? "…" : Fmt.Money(Session.Cart.Total))</strong>
+            <strong>@(Session.Cart.HasShownPrices ? Fmt.Money(Session.Cart.ShownTotal) : "…")</strong>
             <span>@Fmt.Number(Session.Cart.ItemCount) szt. w koszyku</span>
         </div>
         <button class="btn btn-outline btn-lg" @onclick="() => _cartOpen = true"><Icon Name="cart" /> Koszyk</button>

@@ -80,7 +80,7 @@ public sealed class KioskSession : IDisposable
     public DateTime LastActivity { get; private set; } = DateTime.Now;
     public IReadOnlyList<Toast> Toasts => _toasts;
 
-    /// <summary>Cart lines whose price (for the current quantity) is still being calculated.</summary>
+    /// <summary>Cart lines whose price (for the current quantity) is still being calculated – the payment waits for it.</summary>
     public bool PricesPending => Cart.Lines.Any(l => l.Quote is null);
 
     public event Action? Changed;
@@ -198,7 +198,7 @@ public sealed class KioskSession : IDisposable
                 return false;
             }
 
-            var added = Add(product, scanned: true);
+            var added = await AddAsync(product, scanned: true);
             if (added)
             {
                 ScannedProduct = product;
@@ -218,7 +218,34 @@ public sealed class KioskSession : IDisposable
 
     private const int ScannedPhotoSeconds = 4;
 
-    public bool Add(Product product, decimal quantity = 1, bool scanned = false)
+    /// <summary>How long a new cart line waits for its price (and quantity tiers) before it is shown without them.</summary>
+    private static readonly TimeSpan NewLinePriceWait = TimeSpan.FromSeconds(1.5);
+
+    /// <summary>
+    /// Adds the product. A new line waits (briefly) for its price and quantity tiers, so it appears in the cart once,
+    /// complete – without a placeholder, a total changing several times and a line growing a moment later.
+    /// </summary>
+    public async Task<bool> AddAsync(Product product, decimal quantity = 1, bool scanned = false)
+    {
+        Touch();
+        if (product.IsAvailable && Cart.Lines.All(l => l.Product.Id != product.Id))
+        {
+            var context = Pricing;
+            var target = Math.Min(quantity, product.AvailableQuantity);
+            var prepare = Task.WhenAll(
+                _pricing.TryGetCached(context, product.Id, target) is null
+                    ? SafeAsync(() => _pricing.GetPricesAsync(context, [new PriceRequest(product.Id, target)], PricingPriority.High))
+                    : Task.CompletedTask,
+                _pricing.TryGetCachedBreaks(context, product.Id) is null
+                    ? SafeAsync(() => _pricing.CalculateBreaksAsync(context, [product.Id]))
+                    : Task.CompletedTask);
+            await Task.WhenAny(prepare, Task.Delay(NewLinePriceWait));
+        }
+
+        return Add(product, quantity, scanned);
+    }
+
+    private bool Add(Product product, decimal quantity, bool scanned)
     {
         Touch();
         DocumentKind ??= SaleDocumentKind.Receipt;

@@ -38,6 +38,28 @@ public sealed class CartLine
     public decimal Discount => Math.Max(0, ListTotal - Total);
     public int DiscountPercent => Quote?.DiscountPercent ?? 0;
     public IReadOnlyList<WarehouseAllocation> Allocations => Product.Allocate(Quantity);
+
+    /// <summary>
+    /// Price of the previous quantity – shown while the price of a changed quantity is being calculated, so the cart
+    /// does not blink; never used for the sale (<see cref="Quote"/> is).
+    /// </summary>
+    public PriceQuote? LastQuote { get; internal set; }
+
+    /// <summary>Price shown in the cart: the calculated one, or the previous one while calculating; null for a new line.</summary>
+    public PriceQuote? ShownQuote => Quote ?? LastQuote;
+
+    public decimal ShownUnitPrice => ShownQuote?.Price ?? Product.GrossPrice;
+    public decimal ShownTotal => Math.Round(ShownUnitPrice * Quantity, 2, MidpointRounding.AwayFromZero);
+    public decimal ShownListTotal => Math.Round((ShownQuote?.BasePrice ?? Product.GrossPrice) * Quantity, 2, MidpointRounding.AwayFromZero);
+    public decimal ShownDiscount => Math.Max(0, ShownListTotal - ShownTotal);
+    public int ShownDiscountPercent => ShownQuote?.DiscountPercent ?? 0;
+
+    /// <summary>The quantity changed – the price is calculated again, the previous one is shown meanwhile.</summary>
+    internal void Reprice()
+    {
+        LastQuote = ShownQuote;
+        Quote = null;
+    }
 }
 
 public enum CartChangeResult
@@ -58,6 +80,13 @@ public sealed class Cart
     public IReadOnlyList<CartLine> Lines => _lines;
     public bool IsEmpty => _lines.Count == 0;
     public decimal Total => _lines.Sum(l => l.Total);
+
+    /// <summary>Total shown in the cart (previous prices of lines being recalculated) – see <see cref="CartLine.ShownQuote"/>.</summary>
+    public decimal ShownTotal => _lines.Sum(l => l.ShownTotal);
+    public decimal ShownDiscount => _lines.Sum(l => l.ShownDiscount);
+
+    /// <summary>Every line has a price to show (only a new line has none until it is calculated).</summary>
+    public bool HasShownPrices => _lines.All(l => l.ShownQuote is not null);
     public decimal Discount => _lines.Sum(l => l.Discount);
     public decimal ItemCount => _lines.Sum(l => l.Quantity);
 
@@ -81,7 +110,7 @@ public sealed class Cart
         {
             line.Product = product;
             line.Quantity = target;
-            line.Quote = null; // quantity promotions – the price depends on the quantity
+            line.Reprice(); // quantity promotions – the price depends on the quantity
         }
 
         Changed?.Invoke();
@@ -100,7 +129,7 @@ public sealed class Cart
 
         var limited = Math.Min(quantity, line.Product.AvailableQuantity);
         if (limited != line.Quantity)
-            line.Quote = null;
+            line.Reprice();
         line.Quantity = limited;
         Changed?.Invoke();
         return limited < quantity ? CartChangeResult.LimitedByStock : CartChangeResult.Updated;
@@ -125,7 +154,10 @@ public sealed class Cart
     public void ClearQuotes()
     {
         foreach (var line in _lines)
+        {
             line.Quote = null;
+            line.LastQuote = null; // other customer – other prices, nothing to show until calculated
+        }
         Changed?.Invoke();
     }
 
@@ -154,7 +186,7 @@ public sealed class Cart
             if (priceChanged || quantity != line.Quantity)
                 changed.Add(line);
             if (quantity != line.Quantity)
-                line.Quote = null;
+                line.Reprice();
             line.Product = fresh;
             line.Quantity = quantity;
         }

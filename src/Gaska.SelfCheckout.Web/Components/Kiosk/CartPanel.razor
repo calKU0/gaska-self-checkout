@@ -33,7 +33,8 @@
         <div class="cart-lines">
             @foreach (var line in Session.Cart.Lines)
             {
-                var pending = line.Quote is null;
+                var shown = line.ShownQuote;
+                var pending = shown is null; // a new line – a changed quantity shows its previous price until recalculated
                 var nextTier = Session.QuantityBreaks(line.Product.Id).FirstOrDefault(t => t.Quantity > line.Quantity);
                 var pickup = line.Allocations.Where(a => !a.IsPrimary).Sum(a => a.Quantity);
                 <div class="cart-line @(line.Product.Id == Session.LastAddedProductId ? "flash" : null)" @key="line.Product.Id" data-product="@line.Product.Id">
@@ -44,22 +45,22 @@
                         {
                             <div class="secondary-stock"><Icon Name="map" Class="inline-icon" /> @Fmt.Number(pickup) @line.Product.Unit do odbioru z magazynu</div>
                         }
-                        @if (nextTier is not null && !pending && nextTier.Quote.Price < line.UnitPrice && nextTier.Quantity <= line.Product.AvailableQuantity)
+                        @if (nextTier is not null && !pending && nextTier.Quote.Price < line.ShownUnitPrice && nextTier.Quantity <= line.Product.AvailableQuantity)
                         {
                             <div class="tier-hint">Od @Fmt.Number(nextTier.Quantity) @line.Product.Unit taniej: @Fmt.Money(nextTier.Quote.Price) / @line.Product.Unit</div>
                         }
                     </div>
-                    <div class="line-total tabular @(!pending && line.Discount > 0 ? "discounted" : null)">
+                    <div class="line-total tabular @(!pending && line.ShownDiscount > 0 ? "discounted" : null)">
                         @if (pending)
                         {
                             <span class="price-pending"></span>
                         }
                         else
                         {
-                            @Fmt.Money(line.Total)
-                            @if (line.Discount > 0)
+                            @Fmt.Money(line.ShownTotal)
+                            @if (line.ShownDiscount > 0)
                             {
-                                <span class="list-price">@Fmt.Money(line.ListTotal)</span>
+                                <span class="list-price">@Fmt.Money(line.ShownListTotal)</span>
                             }
                         }
                     </div>
@@ -70,10 +71,10 @@
                             <button @onclick="() => Session.SetQuantity(line.Product.Id, line.Quantity + 1)" disabled="@(line.Quantity >= line.Product.AvailableQuantity)" aria-label="Zwiększ ilość"><Icon Name="plus" /></button>
                         </div>
                         <span class="unit-price">
-                            @(pending ? "liczymy cenę…" : $"{Fmt.Money(line.UnitPrice)} / {line.Product.Unit}")
-                            @if (!pending && line.DiscountPercent > 0)
+                            @(pending ? "liczymy cenę…" : $"{Fmt.Money(line.ShownUnitPrice)} / {line.Product.Unit}")
+                            @if (!pending && line.ShownDiscountPercent > 0)
                             {
-                                <span class="discount-badge">rabat −@line.DiscountPercent%</span>
+                                <span class="discount-badge">rabat −@line.ShownDiscountPercent%</span>
                             }
                         </span>
                         <button class="remove-btn" @onclick="() => Session.Remove(line.Product.Id)" aria-label="Usuń z koszyka"><Icon Name="trash" /></button>
@@ -85,19 +86,20 @@
 
     <div class="cart-footer">
         @* stays while prices are recalculated – the footer does not change its height on every scan *@
-        @if (Session.Cart.Discount > 0)
+        @if (Session.Cart.ShownDiscount > 0)
         {
             <div class="cart-discount">
                 <span>Rabat</span>
-                <span class="tabular">@(Session.PricesPending ? "…" : "−" + Fmt.Money(Session.Cart.Discount))</span>
+                <span class="tabular">@(Session.Cart.HasShownPrices ? "−" + Fmt.Money(Session.Cart.ShownDiscount) : "…")</span>
             </div>
         }
         <div class="cart-total">
             <span class="label">Do zapłaty</span>
-            <span class="amount">@(Session.PricesPending ? "…" : Fmt.Money(Session.Cart.Total))</span>
+            <span class="amount">@(Session.Cart.HasShownPrices ? Fmt.Money(Session.Cart.ShownTotal) : "…")</span>
         </div>
         <button class="btn btn-primary btn-xl btn-block" disabled="@(Session.Cart.IsEmpty || Session.PricesPending)" @onclick="OnPay">
-            <Icon Name="card" /> @(Session.PricesPending ? "Liczymy ceny…" : "Zapłać")
+            @* payment waits for the prices of the current quantities; the label changes only while a total is unknown *@
+            <Icon Name="card" /> @(Session.Cart.HasShownPrices ? "Zapłać" : "Liczymy ceny…")
         </button>
         <button class="btn btn-ghost btn-block btn-sm" @onclick="OnCancelShopping">Anuluj zakupy</button>
     </div>

@@ -74,13 +74,13 @@
             }
             else if (inCart is not null)
             {
-                <button class="btn btn-primary btn-block" @onclick="() => Session.Add(p)" @ondblclick:stopPropagation disabled="@(inCart.Quantity >= p.AvailableQuantity)">
+                <button class="btn btn-primary btn-block" @onclick="() => Session.AddAsync(p)" @ondblclick:stopPropagation disabled="@(inCart.Quantity >= p.AvailableQuantity)">
                     <Icon Name="plus" /><span class="label"> Dodaj kolejną (@Fmt.Number(inCart.Quantity))</span>
                 </button>
             }
             else
             {
-                <button class="btn btn-outline btn-block" @onclick="() => Session.Add(p)" @ondblclick:stopPropagation>
+                <button class="btn btn-outline btn-block" @onclick="() => Session.AddAsync(p)" @ondblclick:stopPropagation>
                     <Icon Name="cart" /><span class="label"> Dodaj do koszyka</span>
                 </button>
             }
@@ -97,10 +97,10 @@
     private string? _pricedKey;
 
     /// <summary>Double click (double tap) on the card adds the product; the button counts its own clicks only.</summary>
-    private void AddOnDoubleClick(Product product, CartLine? inCart)
+    private async Task AddOnDoubleClick(Product product, CartLine? inCart)
     {
         if (product.IsAvailable && (inCart is null || inCart.Quantity < product.AvailableQuantity))
-            Session.Add(product);
+            await Session.AddAsync(product);
     }
 
     // after every render – also the ones caused by a session change (login / logout, receipt ↔ invoice), which do not

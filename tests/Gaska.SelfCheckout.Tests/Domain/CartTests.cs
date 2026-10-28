@@ -84,4 +84,41 @@ public class CartTests
         Assert.Null(cart.Lines[0].Quote);
         Assert.Equal(300m, cart.Total);
     }
+
+    [Fact]
+    public void Previous_price_is_shown_while_a_changed_quantity_is_recalculated()
+    {
+        var cart = new Cart();
+        var p = TestData.Product(1, 100m, 10);
+        cart.Add(p);
+        var line = cart.Lines[0];
+        Assert.False(cart.HasShownPrices); // a new line has no price to show yet
+
+        cart.SetQuote(p.Id, 1, new PriceQuote(100m, 90m));
+        cart.Add(p);
+
+        Assert.Null(line.Quote); // the sale waits for the price of 2 pcs
+        Assert.True(cart.HasShownPrices);
+        Assert.Equal(180m, line.ShownTotal);
+        Assert.Equal(180m, cart.ShownTotal);
+        Assert.Equal(20m, cart.ShownDiscount);
+        Assert.Equal(200m, cart.Total);
+
+        cart.SetQuote(p.Id, 2, new PriceQuote(100m, 80m));
+        Assert.Equal(160m, cart.ShownTotal);
+    }
+
+    [Fact]
+    public void Previous_prices_are_not_shown_for_another_customer()
+    {
+        var cart = new Cart();
+        var p = TestData.Product(1, 100m, 10);
+        cart.Add(p);
+        cart.SetQuote(p.Id, 1, new PriceQuote(100m, 90m));
+
+        cart.ClearQuotes();
+
+        Assert.Null(cart.Lines[0].ShownQuote);
+        Assert.False(cart.HasShownPrices);
+    }
 }
