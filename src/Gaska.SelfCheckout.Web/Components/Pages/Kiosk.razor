@@ -82,9 +82,23 @@
                     default:
                         <div class="scan-hero">
                             <div class="scan-hero-inner">
-                                <div class="scan-illustration"><Icon Name="scan" StrokeWidth="1.4" /></div>
-                                <h1>Zeskanuj kod kreskowy</h1>
-                                <p>Zbliż kod kreskowy produktu do czytnika. Produkt automatycznie trafi do koszyka.</p>
+                                @if (Session.ScannedProduct is { } scanned)
+                                {
+                                    @* photo of the product just scanned, for a moment instead of the scan illustration *@
+                                    <div class="scan-illustration scanned" @key="scanned">
+                                        <Icon Name="box" />
+                                        <img src="img/product/@scanned.Id" alt="" onerror="this.remove()" />
+                                        <span class="scanned-check"><Icon Name="check" /></span>
+                                    </div>
+                                    <h1>Dodano do koszyka</h1>
+                                    <p>@scanned.Name</p>
+                                }
+                                else
+                                {
+                                    <div class="scan-illustration"><Icon Name="scan" StrokeWidth="1.4" /></div>
+                                    <h1>Zeskanuj kod kreskowy</h1>
+                                    <p>Zbliż kod kreskowy produktu do czytnika. Produkt automatycznie trafi do koszyka.</p>
+                                }
                                 <div class="scan-hero-actions">
                                     <button class="btn btn-outline btn-lg" @onclick="() => Session.SetMode(ShoppingMode.Search)"><Icon Name="search" /> Brak kodu? Wyszukaj</button>
                                     <button class="btn btn-outline btn-lg" @onclick="() => Session.SetMode(ShoppingMode.Categories)"><Icon Name="grid" /> Przeglądaj kategorie</button>

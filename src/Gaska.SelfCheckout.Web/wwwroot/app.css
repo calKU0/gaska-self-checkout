@@ -188,6 +188,16 @@ input { font: inherit; }
     animation: scanline 2.2s ease-in-out infinite;
 }
 @keyframes scanline { 0%, 100% { top: 26%; } 50% { top: 72%; } }
+/* photo of the product just scanned (placeholder icon underneath when it has no photo) */
+.scan-illustration.scanned { background: var(--white); border: 4px solid var(--success); animation: pop .25s ease; }
+.scan-illustration.scanned::after { content: none; }
+.scan-illustration.scanned > svg { width: 40%; height: 40%; color: var(--grey-200); }
+.scan-illustration.scanned img { position: absolute; inset: 14%; width: 72%; height: 72%; object-fit: contain; }
+.scanned-check {
+    position: absolute; right: 2%; bottom: 2%; width: 26%; aspect-ratio: 1; border-radius: 50%;
+    background: var(--success); color: var(--white); display: grid; place-items: center;
+}
+.scanned-check svg { width: 60%; height: 60%; }
 .scan-hero h1 { color: var(--grey-900); }
 .scan-hero p { font-size: 1.15rem; color: var(--text-muted); }
 .scan-hero-actions { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 8px; }
@@ -286,6 +296,7 @@ input { font: inherit; }
     transition: border-color .15s ease, box-shadow .15s ease;
 }
 .product-card:hover { border-color: var(--grey-400); }
+.product-card { user-select: none; touch-action: manipulation; } /* double tap on the card adds it to the cart */
 /* photo with a placeholder icon underneath (shown when the product has no photo) */
 .product-card .photo {
     position: relative; aspect-ratio: 16 / 10; max-height: 150px; border-radius: 12px; background: var(--grey-100);
@@ -458,6 +469,9 @@ input { font: inherit; }
 }
 .toast .ico { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; flex: none; }
 .toast .ico svg { width: 24px; height: 24px; }
+.toast-photo { position: relative; width: 64px; height: 64px; border-radius: 12px; background: var(--white); display: grid; place-items: center; overflow: hidden; flex: none; }
+.toast-photo svg { width: 30px; height: 30px; color: var(--grey-200); }
+.toast-photo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .toast.success .ico { background: var(--success); }
 .toast.warning .ico { background: var(--yellow); color: var(--grey-900); }
 .toast.error .ico { background: var(--danger); }

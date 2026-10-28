@@ -16,7 +16,8 @@ public enum ToastKind
     Error
 }
 
-public sealed record Toast(Guid Id, ToastKind Kind, string Title, string? Text, DateTime ExpiresAt);
+/// <param name="ProductId">Product whose photo is shown next to the message (scanned product).</param>
+public sealed record Toast(Guid Id, ToastKind Kind, string Title, string? Text, DateTime ExpiresAt, int? ProductId = null);
 
 public enum ShoppingMode
 {
@@ -69,6 +70,10 @@ public sealed class KioskSession : IDisposable
     /// <summary>Prices are calculated by XL for the customer (or the one-off customer) and the document type.</summary>
     public PricingContext Pricing => PricingContext.For(Customer, DocumentKind ?? SaleDocumentKind.Receipt);
     public int? LastAddedProductId { get; private set; }
+
+    /// <summary>Product just added by scanning – its photo replaces the scan illustration for a moment.</summary>
+    public Product? ScannedProduct { get; private set; }
+    private DateTime _scannedUntil;
     public DateTime LastActivity { get; private set; } = DateTime.Now;
     public IReadOnlyList<Toast> Toasts => _toasts;
 
@@ -190,7 +195,15 @@ public sealed class KioskSession : IDisposable
                 return false;
             }
 
-            return Add(product);
+            var added = Add(product, scanned: true);
+            if (added)
+            {
+                ScannedProduct = product;
+                _scannedUntil = DateTime.Now.AddSeconds(ScannedPhotoSeconds);
+                Notify();
+            }
+
+            return added;
         }
         catch (Exception ex)
         {
@@ -200,7 +213,9 @@ public sealed class KioskSession : IDisposable
         }
     }
 
-    public bool Add(Product product, decimal quantity = 1)
+    private const int ScannedPhotoSeconds = 4;
+
+    public bool Add(Product product, decimal quantity = 1, bool scanned = false)
     {
         Touch();
         DocumentKind ??= SaleDocumentKind.Receipt;
@@ -211,19 +226,40 @@ public sealed class KioskSession : IDisposable
             case CartChangeResult.Increased:
                 LastAddedProductId = product.Id;
                 _ = PriceCartAsync();
+                LogAdded(product, scanned, result);
                 RequestBreaks(product.Id);
-                ShowToast(ToastKind.Success, "Dodano do koszyka", product.Name);
+                ShowToast(ToastKind.Success, "Dodano do koszyka", product.Name, productId: scanned ? product.Id : null);
                 return true;
             case CartChangeResult.LimitedByStock:
                 LastAddedProductId = product.Id;
                 _ = PriceCartAsync();
+                LogAdded(product, scanned, result);
                 ShowToast(ToastKind.Warning, "Brak większej ilości",
                     $"Dostępne: {product.AvailableQuantity:0.##} {product.Unit} – „{product.Name}”.");
                 return false;
             default:
+                _logger.LogInformation("Cart: {ProductCode} „{ProductName}” (id {ProductId}) refused – out of stock; customer {Customer}, {DocumentKind}",
+                    product.Code, product.Name, product.Id, CustomerForLog, DocumentKind);
                 ShowToast(ToastKind.Warning, "Towar chwilowo niedostępny", $"„{product.Name}” – brak na stanie, nie można go teraz kupić na tej kasie.", seconds: 6);
                 return false;
         }
+    }
+
+    private string CustomerForLog => Customer is { } c ? $"{c.Acronym} (id {c.Id})" : "one-off customer";
+
+    /// <summary>
+    /// Who added what to the cart. The price is logged when it is already known (cached); otherwise it is logged by
+    /// PriceLinesAsync once XL has calculated it.
+    /// </summary>
+    private void LogAdded(Product product, bool scanned, CartChangeResult result)
+    {
+        var line = Cart.Lines.FirstOrDefault(l => l.Product.Id == product.Id);
+        var price = line?.Quote is { } q ? $"{q.Price:0.00} PLN (list {q.BasePrice:0.00} PLN)" : "being calculated";
+        _logger.LogInformation(
+            "Cart: {ProductCode} „{ProductName}” (id {ProductId}) added by {Source}{Limited}; quantity in cart {Quantity} {Unit}, unit price {Price}; customer {Customer}, {DocumentKind}, cart total {CartTotal:0.00} PLN",
+            product.Code, product.Name, product.Id, scanned ? "scan" : "screen",
+            result == CartChangeResult.LimitedByStock ? " (limited by stock)" : "", line?.Quantity, product.Unit, price,
+            CustomerForLog, DocumentKind, Cart.Total);
     }
 
     public void SetQuantity(int productId, decimal quantity)
@@ -313,7 +349,12 @@ public sealed class KioskSession : IDisposable
                 if (line is null)
                     continue;
                 if (prices.TryGetValue(r.ProductId, out var quote))
-                    Cart.SetQuote(r.ProductId, r.Quantity, quote);
+                {
+                    if (Cart.SetQuote(r.ProductId, r.Quantity, quote))
+                        _logger.LogInformation(
+                            "Cart: {ProductCode} (id {ProductId}) priced {Price:0.00} PLN (list {ListPrice:0.00} PLN) for {Quantity} {Unit}; customer {Customer}, {DocumentKind}",
+                            line.Product.Code, r.ProductId, quote.Price, quote.BasePrice, r.Quantity, line.Product.Unit, CustomerForLog, context.DocumentKind);
+                }
                 else if (Cart.SetQuote(r.ProductId, r.Quantity, PriceQuote.ListPrice(line.Product.GrossPrice)))
                     listPrices++;
             }
@@ -340,21 +381,30 @@ public sealed class KioskSession : IDisposable
         DocumentKind = null;
         Customer = null;
         LastAddedProductId = null;
+        ScannedProduct = null;
         _toasts.Clear();
         Notify();
     }
 
-    public void ShowToast(ToastKind kind, string title, string? text = null, int seconds = 4)
+    public void ShowToast(ToastKind kind, string title, string? text = null, int seconds = 4, int? productId = null)
     {
-        _toasts.Add(new Toast(Guid.NewGuid(), kind, title, text, DateTime.Now.AddSeconds(seconds)));
+        _toasts.Add(new Toast(Guid.NewGuid(), kind, title, text, DateTime.Now.AddSeconds(seconds), productId));
         while (_toasts.Count > 3)
             _toasts.RemoveAt(0);
         Notify();
     }
 
+    /// <summary>Removes expired notifications and the expired photo of the scanned product.</summary>
     public void ExpireToasts()
     {
-        if (_toasts.RemoveAll(t => t.ExpiresAt <= DateTime.Now) > 0)
+        var changed = _toasts.RemoveAll(t => t.ExpiresAt <= DateTime.Now) > 0;
+        if (ScannedProduct is not null && _scannedUntil <= DateTime.Now)
+        {
+            ScannedProduct = null;
+            changed = true;
+        }
+
+        if (changed)
             Notify();
     }
 

@@ -7,6 +7,10 @@
             <span class="ico">
                 <Icon Name="@(t.Kind switch { ToastKind.Success => "check", ToastKind.Warning => "alert", ToastKind.Error => "x", _ => "info" })" />
             </span>
+            @if (t.ProductId is { } productId)
+            {
+                <span class="toast-photo"><Icon Name="box" /><img src="img/product/@productId" alt="" onerror="this.remove()" /></span>
+            }
             <div>
                 <strong>@t.Title</strong>
                 @if (!string.IsNullOrEmpty(t.Text))
