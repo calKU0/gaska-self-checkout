@@ -53,8 +53,9 @@
         }
         else
         {
-            <button class="btn btn-outline" @onclick="() => _help = true"><Icon Name="help" /> Pomoc</button>
+            <button class="btn btn-primary" @onclick="CallHelp"><Icon Name="bell" /> Wezwij pomoc</button>
         }
+        <button class="btn btn-outline" @onclick="() => _help = true"><Icon Name="help" /> Pomoc</button>
     </header>
 
     <main class="workspace">
@@ -311,6 +312,14 @@
     {
         _paying = false;
         Session.Touch();
+    }
+
+    /// <summary>Calls staff straight from the top bar; the help dialog confirms that someone is coming.</summary>
+    private void CallHelp()
+    {
+        Alerts.RequestHelp();
+        Session.Touch();
+        _help = true;
     }
 
     private void OpenCustomerDialog(bool account)
