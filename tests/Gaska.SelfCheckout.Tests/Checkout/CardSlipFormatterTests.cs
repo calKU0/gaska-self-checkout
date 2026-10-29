@@ -112,6 +112,19 @@ public class CardSlipFormatterTests
     }
 
     [Fact]
+    public void Reversal_slip_has_no_cardholder_verification()
+    {
+        // the terminal answers a reversal with 1B08 = 0011000 (PIN + signature flags of the original sale)
+        var tx = Approved with { Kind = CardTransactionKind.Reversal, OriginalReceiptNumber = "008018", CvmList = "0011000" };
+
+        var text = new CardSlipFormatter().Format(tx, SlipCopy.Merchant, 40, "SCO1").ToPlainText(40);
+
+        Assert.DoesNotContain("KOD PIN ZGODNY", text);
+        Assert.DoesNotContain("PODPIS", text);
+        Assert.Contains("KOD AUTORYZACJI", text);
+    }
+
+    [Fact]
     public void Refund_merchant_slip_asks_to_credit_the_account()
     {
         var tx = Approved with { Kind = CardTransactionKind.Refund };

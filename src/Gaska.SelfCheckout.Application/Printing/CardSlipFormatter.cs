@@ -102,9 +102,11 @@ public sealed class CardSlipFormatter
                 foreach (var line in Wrap(disclaimer, width))
                     l.Add(new PrintLine(line));
 
-            if (tx.CdcvmVerified && !string.IsNullOrEmpty(tx.CdcvmText))
+            // template "Reversal": no cardholder verification – the terminal repeats 1B08 of the original sale
+            var verified = tx.Kind == CardTransactionKind.Sale;
+            if (verified && tx.CdcvmVerified && !string.IsNullOrEmpty(tx.CdcvmText))
                 l.Add(PrintLine.Center(tx.CdcvmText!));
-            else if (tx.PinVerified && tx.Kind != CardTransactionKind.Refund)
+            else if (verified && tx.PinVerified)
                 l.Add(PrintLine.Center(en ? "PIN CODE VERIFIED" : "KOD PIN ZGODNY"));
 
             var auth = MaskIfRequired(tx.AuthorizationCode, copy, tx.MaskingRules, concealIndex: 5, copyIndex: 6);
@@ -138,7 +140,7 @@ public sealed class CardSlipFormatter
         if (!string.IsNullOrEmpty(tx.ApplicationCryptogram))
             l.Add(new PrintLine($"TC: {tx.ApplicationCryptogram}"));
 
-        if (tx.IsApproved && tx.SignatureRequired && copy == SlipCopy.Merchant)
+        if (tx.IsApproved && tx.SignatureRequired && copy == SlipCopy.Merchant && tx.Kind != CardTransactionKind.Reversal)
         {
             l.Add(PrintLine.Blank);
             l.Add(PrintLine.Blank);
