@@ -138,14 +138,11 @@ public sealed class PolcardTerminal : IPaymentTerminal
         string type, decimal amount, string ecrTransactionId, bool reversal, string? originalReceipt,
         ITerminalInteraction interaction, CancellationToken ct, string? authorizationCode = null)
     {
-        try
+        // nothing sent yet – the transaction did not start (requirement: ECR-POS communication error message)
+        CardTransaction NotStarted(Exception ex)
         {
-            await EnsureSessionAsync(ct);
-        }
-        catch (Exception ex) when (ex is IOException or TimeoutException or System.Net.Sockets.SocketException or InvalidOperationException)
-        {
-            // nothing sent yet – the transaction did not start (requirement: ECR-POS communication error message)
             _logger.LogError(ex, "No connection with the terminal – the transaction was not started");
+            _session = null; // a new session once the terminal is back
             return new CardTransaction
             {
                 Outcome = CardTransactionOutcome.Cancelled,
@@ -154,6 +151,15 @@ public sealed class PolcardTerminal : IPaymentTerminal
                 ResultDescription = "Brak komunikacji z terminalem płatniczym",
                 Kind = reversal ? CardTransactionKind.Reversal : type == RefundTransactionType ? CardTransactionKind.Refund : CardTransactionKind.Sale
             };
+        }
+
+        try
+        {
+            await EnsureSessionAsync(ct);
+        }
+        catch (Exception ex) when (ex is IOException or TimeoutException or System.Net.Sockets.SocketException or InvalidOperationException)
+        {
+            return NotStarted(ex);
         }
 
         var message = BuildStartExtended(type, amount, ecrTransactionId, reversal, originalReceipt, authorizationCode);
@@ -171,6 +177,12 @@ public sealed class PolcardTerminal : IPaymentTerminal
                 await EnsureSessionAsync(CancellationToken.None, force: true);
                 outcome = await RunTransactionAsync(message, interaction, ct);
             }
+        }
+        catch (TerminalUnreachableException ex)
+        {
+            // the session is still open from an earlier transaction, but the terminal does not answer at all:
+            // the start message was not sent, so there is nothing to recover
+            return NotStarted(ex.InnerException!);
         }
         catch (Exception ex) when (ex is IOException or TimeoutException or System.Net.Sockets.SocketException)
         {
@@ -270,6 +282,21 @@ public sealed class PolcardTerminal : IPaymentTerminal
         return new EcrMessage(EcrMessageIds.EcrStartExtended, fields);
     }
 
+    /// <summary>The connection for a transaction could not be opened – nothing was sent to the terminal.</summary>
+    private sealed class TerminalUnreachableException(Exception inner) : Exception(inner.Message, inner);
+
+    private async Task<IEcrConnection> ConnectForTransactionAsync()
+    {
+        try
+        {
+            return await _connections.ConnectAsync(CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is IOException or TimeoutException or System.Net.Sockets.SocketException)
+        {
+            throw new TerminalUnreachableException(ex);
+        }
+    }
+
     private sealed record TransactionOutcome(PosFinish? Finish, bool PosError, bool AbortRequested, string? Error)
     {
         public static TransactionOutcome Lost(string error) => new(null, false, false, error);
@@ -281,7 +308,7 @@ public sealed class PolcardTerminal : IPaymentTerminal
     /// </summary>
     private async Task<TransactionOutcome> RunTransactionAsync(EcrMessage start, ITerminalInteraction interaction, CancellationToken ct)
     {
-        await using var conn = await _connections.ConnectAsync(CancellationToken.None);
+        await using var conn = await ConnectForTransactionAsync();
         await conn.SendAsync(start, CancellationToken.None);
 
         var incoming = Channel.CreateUnbounded<EcrMessage?>();

@@ -106,6 +106,22 @@ public class PolcardTerminalTests
         Assert.Equal(CardTransaction.NoConnectionCode, tx.ResultCode);
     }
 
+    [Fact]
+    public async Task Terminal_unplugged_after_the_session_was_opened_reports_no_connection_at_once()
+    {
+        // certification test 4: the session is open (hello earlier), then the LAN cable is pulled out
+        var factory = new ScriptedFactory([Hello], ["|2810000|000|0|0000|0000||"]);
+        var terminal = Create(factory);
+        await terminal.RefundAsync(new CardRefundRequest(1m, "14"), new ScriptedInteraction(TerminalReply.Cancel));
+        factory.Unplugged = true;
+
+        var tx = await terminal.SaleAsync(new CardSaleRequest(13.33m, "15"), new ScriptedInteraction(TerminalReply.Cancel));
+
+        Assert.Equal(CardTransactionOutcome.Cancelled, tx.Outcome);
+        Assert.Equal(CardTransaction.NoConnectionCode, tx.ResultCode);
+        Assert.DoesNotContain("|2811211|", factory.Sent); // nothing to recover – the start message was not sent
+    }
+
     private sealed class UnreachableFactory : IEcrConnectionFactory
     {
         public Task<IEcrConnection> ConnectAsync(CancellationToken ct) => throw new TimeoutException("No connection to the terminal.");
@@ -131,9 +147,11 @@ public class PolcardTerminalTests
     {
         private int _index;
         public List<string> Sent { get; } = [];
+        public bool Unplugged { get; set; }
 
-        public Task<IEcrConnection> ConnectAsync(CancellationToken ct) =>
-            Task.FromResult<IEcrConnection>(new ScriptedConnection(scripts[Math.Min(_index++, scripts.Length - 1)], Sent));
+        public Task<IEcrConnection> ConnectAsync(CancellationToken ct) => Unplugged
+            ? throw new TimeoutException("No connection to the terminal.")
+            : Task.FromResult<IEcrConnection>(new ScriptedConnection(scripts[Math.Min(_index++, scripts.Length - 1)], Sent));
     }
 
     private sealed class ScriptedConnection(string[] script, List<string> sent) : IEcrConnection
