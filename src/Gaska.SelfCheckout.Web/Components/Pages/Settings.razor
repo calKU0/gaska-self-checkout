@@ -67,6 +67,7 @@
                 <div class="field"><label>Sprawdzanie połączeń co (s)</label><input type="number" @bind="_kiosk.HealthCheckSeconds" /><small>terminal, drukarka, XL, baza; 0 = wyłączone</small></div>
                 <div class="field"><label>Zatrzymaj kasę po błędach z rzędu</label><input type="number" @bind="_kiosk.HealthFailuresBeforeStop" /><small>ponowne sprawdzenie po 15 s</small></div>
                 <div class="field"><label>Głośność alarmu (0–100)</label><input type="number" min="0" max="100" @bind="_kiosk.AlarmVolume" /><small>wezwanie pomocy, utrata połączenia; 0 = bez dźwięku</small></div>
+                <div class="field"><label>Czas na pytanie o potwierdzenie (s)</label><input type="number" min="5" @bind="_checkout.PrintQuestionSeconds" /><small>bez odpowiedzi = bez wydruku potwierdzenia; min. 5</small></div>
                 <label class="check"><input type="checkbox" @bind="_kiosk.InvoicesEnabled" /> Faktury dla firm</label>
                 <label class="check"><input type="checkbox" @bind="_checkout.PrintMerchantCopy" /> Drukuj kopię potwierdzenia dla sprzedawcy</label>
                 <label class="check"><input type="checkbox" @bind="_checkout.PrintDeclinedSlip" /> Drukuj potwierdzenie odmowy</label>
@@ -369,7 +370,8 @@
         Store.Save(KioskOptions.Section, _kiosk, nameof(KioskOptions.StationId), nameof(KioskOptions.ServicePin), nameof(KioskOptions.AdminPin),
             nameof(KioskOptions.IdleTimeoutSeconds), nameof(KioskOptions.ThankYouSeconds), nameof(KioskOptions.MaxTransactionAmount),
             nameof(KioskOptions.InvoicesEnabled), nameof(KioskOptions.HealthCheckSeconds), nameof(KioskOptions.HealthFailuresBeforeStop), nameof(KioskOptions.AlarmVolume));
-        Store.Save(CheckoutOptions.Section, _checkout, nameof(CheckoutOptions.PrintMerchantCopy), nameof(CheckoutOptions.PrintDeclinedSlip));
+        Store.Save(CheckoutOptions.Section, _checkout, nameof(CheckoutOptions.PrintMerchantCopy), nameof(CheckoutOptions.PrintDeclinedSlip),
+            nameof(CheckoutOptions.PrintQuestionSeconds));
     }, "stanowisko");
 
     // only the fields shown on a card are stored – the others keep coming from appsettings.json

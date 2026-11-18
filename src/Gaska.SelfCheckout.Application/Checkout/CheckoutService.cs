@@ -152,7 +152,11 @@ public sealed class CheckoutService(
         await Save(record);
         logger.LogInformation("Payment approved, receipt no {Receipt}, auth code {Auth}", card.ReceiptNumber, card.AuthorizationCode);
 
-        // 2. ERP document
+        // 2. The customer chooses the card payment confirmation before anything is printed – the receipt and the
+        // confirmation then come out one after the other (on the answer or after the question times out)
+        var printCardholderCopy = await AskToPrintConfirmation(card, interaction, progress, options);
+
+        // 3. ERP document
         progress.Report(new(CheckoutStage.CreatingDocument, checkout.DocumentKind == SaleDocumentKind.Invoice
             ? "Płatność zaakceptowana. Wystawiamy fakturę…"
             : "Płatność zaakceptowana. Drukujemy paragon…"));
@@ -186,7 +190,7 @@ public sealed class CheckoutService(
         record.DocumentId = document.DocumentId;
         await Save(record);
 
-        // 3. Pick-up ticket for goods from a non-primary warehouse – right after the receipt when attached to it
+        // 4. Pick-up ticket for goods from a non-primary warehouse – right after the receipt when attached to it
         if (pickup && attachPickup)
         {
             // the receipt already ended without a cut – the ticket itself has to end normally (feed + cut)
@@ -195,8 +199,7 @@ public sealed class CheckoutService(
             await TryPrintPickupTicket(record, cart, document.DocumentNumber ?? record.Id.ToString()[..8]);
         }
 
-        // 4. Card payment confirmation (non-fiscal printout on the fiscal printer) – on request of the customer
-        var printCardholderCopy = await AskToPrintConfirmation(card, interaction, progress, options);
+        // 5. Card payment confirmation (non-fiscal printout on the fiscal printer) – as chosen by the customer
         if (printCardholderCopy)
             progress.Report(new(CheckoutStage.PrintingConfirmation, "Drukujemy potwierdzenie płatności kartą…"));
         await TryPrintSlips(record, card, merchantCopy: options.PrintMerchantCopy, cardholderCopy: printCardholderCopy);
@@ -363,7 +366,8 @@ public sealed class CheckoutService(
         if (!options.AskToPrintConfirmation || card.Dcc is not null)
             return true;
 
-        progress.Report(new(CheckoutStage.PrintingConfirmation, "Płatność przyjęta"));
+        // asked before the receipt is printed – the step bar stays on the receipt step
+        progress.Report(new(CheckoutStage.CreatingDocument, "Płatność przyjęta"));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(Math.Max(5, options.PrintQuestionSeconds)));
         try
         {

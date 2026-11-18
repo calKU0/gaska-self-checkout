@@ -54,7 +54,7 @@ public sealed class CheckoutOptions
     public bool AskToPrintConfirmation { get; set; } = true;
 
     /// <summary>Seconds to wait for the answer; no answer = no printout (the customer has left).</summary>
-    public int PrintQuestionSeconds { get; set; } = 30;
+    public int PrintQuestionSeconds { get; set; } = 15;
 
     /// <summary>
     /// Prepare the ERP document (header + lines) while the customer pays on the terminal.
