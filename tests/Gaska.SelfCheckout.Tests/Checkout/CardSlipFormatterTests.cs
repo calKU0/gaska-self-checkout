@@ -50,15 +50,50 @@ public class CardSlipFormatterTests
     }
 
     [Fact]
-    public void Decline_shows_the_host_response_code()
+    public void Decline_does_not_print_the_response_code()
     {
-        var tx = new CardTransaction { Outcome = CardTransactionOutcome.Declined, ResultCode = "4407", AuthorizationResponseCode = "05", Amount = 1m };
+        // Fiserv's decline receipts show the decline and the host's text only
+        var tx = new CardTransaction
+        {
+            Outcome = CardTransactionOutcome.Declined, ResultCode = "1000", AuthorizationResponseCode = "06", DeclineText = "ODMOWA", Amount = 150.51m
+        };
 
         var text = new CardSlipFormatter().Format(tx, SlipCopy.Cardholder, 40, "SCO1").ToPlainText(40);
 
-        Assert.Contains("KOD ODPOWIEDZI: 05", text);
-        Assert.DoesNotContain("4407", text);
         Assert.Contains("TRANSAKCJA ODRZUCONA", text);
+        Assert.Contains("ODMOWA", text);
+        Assert.DoesNotContain("06", text.Replace("2026", ""));
+        Assert.DoesNotContain("KOD ODPOWIEDZI", text);
+    }
+
+    [Fact]
+    public void Dcc_decline_is_printed_in_english_with_the_conversion()
+    {
+        // certification test 13, card MAESTRO DECLINE – Fiserv's sample receipt
+        var tx = new CardTransaction
+        {
+            Outcome = CardTransactionOutcome.Declined, Kind = CardTransactionKind.Sale, ResultCode = "1000", AuthorizationResponseCode = "06",
+            DeclineText = "ODMOWA", Amount = 15m, CardName = "Maestro", ReadMethod = "C", MaskedPan = "**** **** **** 2436",
+            ReceiptNumber = "008013", Timestamp = new DateTime(2026, 10, 29, 14, 6, 20),
+            Dcc = new DccInfo(0.247979m, "EUR", "3,72", "8,44", "I have been offered a choice of currencies…", "0")
+        };
+
+        var text = new CardSlipFormatter().Format(tx, SlipCopy.Cardholder, 40, "SCO1").ToPlainText(40);
+
+        Assert.Contains("SALE AMOUNT:", text);
+        Assert.Contains("1 PLN = 0.247979 EUR", text);
+        Assert.Contains("CURRENCY CONVERSION FEE:", text);
+        Assert.Contains("TRANSACTION CURRENCY:", text);
+        Assert.Contains("TOTAL TRANSACTION AMOUNT:", text);
+        Assert.Contains("3,72 EUR", text);
+        Assert.Contains("TRANSACTION DECLINE", text);
+        Assert.Contains("ODMOWA", text);
+        Assert.Contains("RECEIPT NO: 008013", text);
+        Assert.Contains("DATE: 2026-10-29", text);
+        Assert.Contains("THANKS FOR YOUR PURCHASE!", text);
+        Assert.DoesNotContain("I have been offered", text); // the DCC statement belongs to an approved transaction
+        foreach (var polish in new[] { "SPRZEDAŻ", "ODRZUCONA", "KASA:", "DATA:", "GODZINA", "RACHUNEK", "KOD ODPOWIEDZI" })
+            Assert.DoesNotContain(polish, text);
     }
 
     // templates of the certification sheet (sheet "printouts")

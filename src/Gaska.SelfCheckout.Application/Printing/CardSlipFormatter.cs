@@ -34,7 +34,7 @@ public sealed class CardSlipFormatter
         AddCentered(l, tx.MerchantCity);
         l.Add(PrintLine.Blank);
 
-        l.Add(new PrintLine(Cols($"KASA: {stationId}", $"MID: {tx.MerchantId}", width)));
+        l.Add(new PrintLine(Cols($"{(en ? "ECR" : "KASA")}: {stationId}", $"MID: {tx.MerchantId}", width)));
         l.Add(new PrintLine(Cols("", $"TID: {tx.TerminalId}", width)));
         if (!string.IsNullOrEmpty(tx.ReceiptNumber))
             l.Add(new PrintLine(Cols("", $"{(en ? "RECEIPT NO" : "RACH. NR")}: {tx.ReceiptNumber}", width)));
@@ -71,7 +71,8 @@ public sealed class CardSlipFormatter
                 l.Add(new PrintLine(Cols("NR REFERENCYJNY:", tx.MobileReference!, width)));
         }
 
-        if (tx.Dcc is { } dcc && tx.IsApproved)
+        // the currency conversion is printed for a decline too (Fiserv: a DCC decline follows the DCC standard)
+        if (tx.Dcc is { } dcc && tx.Outcome != CardTransactionOutcome.Cancelled)
         {
             if (dcc.ExchangeRate is { } rate)
             {
@@ -116,20 +117,19 @@ public sealed class CardSlipFormatter
         }
         else if (tx.Outcome == CardTransactionOutcome.Cancelled)
         {
-            l.Add(PrintLine.Center("TRANSAKCJA PRZERWANA", bold: true, wide: true));
+            l.Add(PrintLine.Center(en ? "TRANSACTION CANCELLED" : "TRANSAKCJA PRZERWANA", bold: true, wide: true));
         }
         else
         {
-            l.Add(PrintLine.Center("TRANSAKCJA ODRZUCONA", bold: true));
-            l.Add(PrintLine.Center("ODMOWA", bold: true, wide: true));
-            if (!string.IsNullOrEmpty(tx.DeclineText) && !string.Equals(tx.DeclineText.Trim(), "ODMOWA", StringComparison.OrdinalIgnoreCase))
-                foreach (var line in Wrap(tx.DeclineText!, width))
-                    l.Add(PrintLine.Center(line));
-            // the authorization host's response code (tag 8A, e.g. 05) explains the decline; the terminal result code
-            // (e.g. 4407) only when the host was not reached
-            var responseCode = !string.IsNullOrEmpty(tx.AuthorizationResponseCode) ? tx.AuthorizationResponseCode : tx.ResultCode;
-            if (!string.IsNullOrEmpty(responseCode))
-                l.Add(PrintLine.Center($"KOD ODPOWIEDZI: {responseCode}"));
+            // as in Fiserv's decline receipts: the decline and the host's text (1B03, e.g. "ODMOWA"); the response code
+            // (8A) is not printed – it stays in the journal and the ECR-POS log
+            l.Add(PrintLine.Center(en ? "TRANSACTION DECLINE" : "TRANSAKCJA ODRZUCONA", bold: true));
+            var hostText = string.IsNullOrWhiteSpace(tx.DeclineText) ? "ODMOWA" : tx.DeclineText.Trim();
+            if (hostText.Length <= width / 2)
+                l.Add(PrintLine.Center(hostText, bold: true, wide: true));
+            else
+                foreach (var line in Wrap(hostText, width))
+                    l.Add(PrintLine.Center(line, bold: true));
         }
 
         // EMV data of chip and contactless transactions
@@ -152,8 +152,7 @@ public sealed class CardSlipFormatter
         if (copy == SlipCopy.Cardholder)
         {
             l.Add(PrintLine.Center(en ? "CUSTOMER RECEIPT" : "RACHUNEK DLA KLIENTA", bold: true));
-            if (!en)
-                l.Add(PrintLine.Center("ZAPRASZAMY PONOWNIE"));
+            l.Add(PrintLine.Center(en ? "THANKS FOR YOUR PURCHASE!" : "ZAPRASZAMY PONOWNIE"));
             l.Add(PrintLine.Center(en ? "PLEASE RETAIN THIS RECEIPT" : "PROSZĘ ZACHOWAĆ RACHUNEK"));
         }
         else
@@ -186,7 +185,7 @@ public sealed class CardSlipFormatter
 
         l.Add(PrintLine.Blank);
         var ts = tx.Timestamp ?? DateTime.Now;
-        l.Add(new PrintLine(Cols($"DATA: {ts:yyyy-MM-dd}", $"GODZINA: {ts:HH:mm:ss}", width)));
+        l.Add(new PrintLine(Cols($"{(en ? "DATE" : "DATA")}: {ts:yyyy-MM-dd}", $"{(en ? "TIME" : "GODZINA")}: {ts:HH:mm:ss}", width)));
 
         return new PrintDocument(kind, l);
     }

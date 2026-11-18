@@ -41,6 +41,9 @@ public class PolcardTerminalTests
         Assert.Equal("00", start.Field(0));
         Assert.Equal("000000002100", start.Field(2));
         Assert.Equal("5", start.Field(21)); // pole 23: ECR_TRANSACTION_ID
+        // Fiserv: pełne 40 pól komunikatu (identyfikator + 39 pól), jak w przykładzie z arkusza certyfikacyjnego
+        Assert.Equal(40, start.ToWire().Split('|').Length - 2);
+        Assert.StartsWith("|2811111|00|000|000000002100|||||985|||||||0|||||||5|", start.ToWire());
         Assert.Contains(sent, m => m.ToWire() == "|2821000|01|001|1|");
     }
 
@@ -82,6 +85,21 @@ public class PolcardTerminalTests
         Assert.Equal("20", start.Field(0));
         Assert.Equal("000000002599", start.Field(2));
         Assert.Equal("0", start.Field(14)); // pole 16: REVERSAL FLAG
+    }
+
+    [Fact]
+    public async Task Reversal_sends_the_original_transaction_id_in_field_35_of_40()
+    {
+        var factory = new ScriptedFactory([Hello], ["|2810000|000|0|0000|0000||"]);
+        var terminal = Create(factory);
+
+        await terminal.ReverseAsync(new CardReversalRequest(15.11m, "008019", "40"), new ScriptedInteraction(TerminalReply.Cancel));
+
+        var wire = factory.Sent.Single(m => m.StartsWith("|2811111|"));
+        var start = EcrMessage.Parse(wire);
+        Assert.Equal(40, wire.Split('|').Length - 2);
+        Assert.Equal("1", start.Field(14)); // pole 16: REVERSAL FLAG
+        Assert.Equal("0000008019", start.Field(33)); // pole 35: ORIGINAL TRANSACTION ID
     }
 
     [Fact]

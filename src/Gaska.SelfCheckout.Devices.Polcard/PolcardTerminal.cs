@@ -271,13 +271,12 @@ public sealed class PolcardTerminal : IPaymentTerminal
             ecrTransactionId                // 23 ECR_TRANSACTION_ID
         };
 
+        // Fiserv requires all 40 fields of the message, also the empty ones: 24 PRIVATE CARD NAME, 25 EXTERNAL_TXN_ID,
+        // 26 CH_PHONE, 27 CH_EMAIL, 28 PARTIAL APPROVAL, 29 CARDHOLDER DATA, 30 CARDHOLDER LANGUAGE, 31 SPLIT_PROFILE_ID,
+        // 32-34 LIBRE12-14, 35 ORIGINAL TRANSACTION ID, 36 ITEM NUMBER, 37-40 ITEM1 / ITEM1QUANT / ITEM1AMOUNT / ITEM1SETTLID
+        fields.AddRange(Enumerable.Repeat("", StartExtendedFieldCount - 1 - fields.Count));
         if (reversal && !string.IsNullOrEmpty(originalReceipt))
-        {
-            // 24 PRIVATE CARD NAME, 25 EXTERNAL_TXN_ID, 26 CH_PHONE, 27 CH_EMAIL, 28 PARTIAL APPROVAL, 29 CARDHOLDER DATA,
-            // 30 CARDHOLDER LANGUAGE, 31 SPLIT_PROFILE_ID, 32-34 LIBRE12-14, 35 ORIGINAL TRANSACTION ID
-            fields.AddRange(Enumerable.Repeat("", 11));
-            fields.Add(EcrMessage.Num(long.TryParse(originalReceipt, out var orig) ? orig : 0, 10));
-        }
+            fields[OriginalTransactionIdField - 2] = EcrMessage.Num(long.TryParse(originalReceipt, out var orig) ? orig : 0, 10);
 
         return new EcrMessage(EcrMessageIds.EcrStartExtended, fields);
     }
@@ -296,6 +295,11 @@ public sealed class PolcardTerminal : IPaymentTerminal
             throw new TerminalUnreachableException(ex);
         }
     }
+
+    /// <summary>Fields of ecr_start_extended including the message identifier (field 1).</summary>
+    private const int StartExtendedFieldCount = 40;
+
+    private const int OriginalTransactionIdField = 35;
 
     private sealed record TransactionOutcome(PosFinish? Finish, bool PosError, bool AbortRequested, string? Error)
     {
